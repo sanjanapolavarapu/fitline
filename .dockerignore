@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+.fitline_users.json
+__pycache__
+*.pyc
+*.pyo
+.streamlit/secrets.toml
+*.md
+!README.md
