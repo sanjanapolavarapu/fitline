@@ -49,13 +49,34 @@ FitLine is **free for everyone** — you never charge users, and hosting is **$0
 
 ## What friends do
 
-1. Open your link
-2. **Sidebar → paste free Gemini key** ([aistudio.google.com/apikey](https://aistudio.google.com/apikey))
-3. Paste LaTeX → **Load resume**
+1. Open your link → **Create account** or log in
+2. **Sidebar → paste free Gemini key** ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — for AI
+3. Paste LaTeX → **Load resume** (auto-saves to their account)
 4. Pick a job → **Fix selected section**
 5. Download `.tex` → Overleaf
 
-Each person uses their own quota — your key is never shared or drained.
+---
+
+## Privacy & accounts
+
+Login is **on** (`AUTH_REQUIRED = True`). We store per user:
+
+| Stored | Purpose |
+|--------|---------|
+| Email + hashed password | Login |
+| Saved resume + chat | Pick up where they left off |
+| Login count / last login | Usage stats |
+
+**Not stored:** Gemini API keys (sidebar only, browser session).
+
+**Your user count:** Set `FITLINE_ADMIN_EMAIL=your@email.com` in Streamlit Secrets or local `.env`. Only that email sees **"N registered users"** in the sidebar.
+
+Add to Streamlit Secrets (optional):
+```toml
+FITLINE_ADMIN_EMAIL = "your@email.com"
+```
+
+**Legal note:** Collecting emails/resumes means you should add a short privacy line on signup (already in the app). For a school project / friends-only tool this is usually fine; don't use it commercially without proper policies.
 
 ---
 
@@ -80,16 +101,6 @@ Never commit `.env` or set `GEMINI_API_KEY` in Streamlit Cloud secrets.
 
 ---
 
-## Optional: require login
-
-In `chat_app.py`:
-
-```python
-AUTH_REQUIRED = True
-```
-
----
-
 ## Local Docker test
 
 ```bash
@@ -97,7 +108,7 @@ docker build -t fitline .
 docker run --rm -p 8501:8501 fitline
 ```
 
-Friends paste keys in the sidebar after opening localhost.
+Friends create an account and paste keys in the sidebar after opening localhost.
 
 ---
 
@@ -108,3 +119,4 @@ Friends paste keys in the sidebar after opening localhost.
 | AI not working | Friend must paste their own Gemini key in sidebar |
 | PDF preview fails | Check Streamlit build logs; confirm `packages.txt` is in repo |
 | App slow (Render free) | Normal — wakes from sleep on first visit |
+| Account gone after redeploy | Streamlit may reset files — friends re-create account; saved resumes may be lost |

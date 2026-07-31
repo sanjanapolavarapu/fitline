@@ -83,9 +83,10 @@ FEATURES = [
 ]
 
 STEPS = [
-    ("1", "Load your resume", "Paste LaTeX or upload a PDF — we detect your jobs automatically."),
-    ("2", "Pick one role", "Choose an experience in the sidebar. Fix all bullets or just one."),
-    ("3", "Review & export", "Preview the PDF, chat tweaks, then download updated .tex for Overleaf."),
+    ("1", "Create a free account", "Sign up with email — your resume saves automatically."),
+    ("2", "Load your resume", "Paste LaTeX or upload a PDF — we detect your jobs automatically."),
+    ("3", "Pick one role", "Choose an experience in the sidebar. Fix all bullets or just one."),
+    ("4", "Review & export", "Preview the PDF, chat tweaks, then download updated .tex for Overleaf."),
 ]
 
 
@@ -309,31 +310,26 @@ def _setup_html() -> str:
   margin-bottom: 2rem;
 ">
   <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:1rem;">
-    <span style="font-size:1.5rem;">🔑</span>
+    <span style="font-size:1.5rem;">👤</span>
     <div style="font-size:1.1rem; font-weight:800; color:#312e81; letter-spacing:-0.02em;">
-      Your API key (free, one per person)
+      Free account — pick up where you left off
     </div>
   </div>
   <p style="font-size:0.88rem; line-height:1.65; color:#4338ca; margin:0 0 1.15rem;">
-    AI rewrites use your own free <strong>Google Gemini</strong> key from
-    <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f46e5; font-weight:600;">Google AI Studio</a>
-    (no credit card). Rule-based fixes work without a key.
+    Create an account and your resume saves automatically when you log back in.
+    We store your email, hashed password, and resume text — not your Gemini key.
   </p>
 
   <div style="background:#fff; border:1px solid #c7d2fe; border-radius:14px; padding:1.2rem 1.3rem;">
     <div style="font-size:0.72rem; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#6366f1; margin-bottom:0.55rem;">
-      Where to paste your key
+      Quick start
     </div>
     <ol style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.75; color:#334155;">
-      <li>Click <strong>Open editor</strong> below</li>
-      <li>Open the <strong>left sidebar</strong></li>
-      <li>Under <strong>Your free API key</strong>, paste your Gemini key</li>
-      <li>Click <strong>Test key</strong> — then fix your resume</li>
+      <li>Click <strong>Get started</strong> → create account or log in</li>
+      <li>Paste your free <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f46e5; font-weight:600;">Gemini key</a> in the sidebar (for AI)</li>
+      <li>Load your resume → <strong>Fix selected section</strong></li>
     </ol>
   </div>
-  <p style="font-size:0.78rem; color:#64748b; margin:1rem 0 0; text-align:center;">
-    Never share your key publicly. Each user needs their own key.
-  </p>
 </div>
 """
 
@@ -366,7 +362,7 @@ def render_landing() -> None:
 
     c1, c2, c3 = st.columns([1, 1.4, 1])
     with c2:
-        if st.button("Open editor →", type="primary", use_container_width=True):
+        if st.button("Get started →", type="primary", use_container_width=True):
             _enter_app()
 
     st.markdown(_paths_html(), unsafe_allow_html=True)
@@ -377,7 +373,7 @@ def render_landing() -> None:
 
     c1, c2, c3 = st.columns([1, 1.4, 1])
     with c2:
-        if st.button("Get started — it's free", type="primary", use_container_width=True):
+        if st.button("Sign up / Log in", type="primary", use_container_width=True):
             _enter_app()
 
     st.markdown(
