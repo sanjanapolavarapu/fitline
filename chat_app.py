@@ -38,13 +38,19 @@ AUTH_REQUIRED = True
 EDITOR_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  #MainMenu, footer, header[data-testid="stHeader"] {
+    visibility: hidden !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
   .stApp {
     font-family: 'Inter', system-ui, sans-serif !important;
     background: #eef2f7 !important;
   }
   section.main > div.block-container,
   .block-container {
-    padding-top: 1.25rem !important;
+    padding-top: 3.25rem !important;
     padding-left: 2.5rem !important;
     padding-right: 2.5rem !important;
     padding-bottom: 2rem !important;
@@ -107,6 +113,12 @@ EDITOR_CSS = """
   }
   .fl-app-header {
     margin-bottom: 1.25rem !important;
+    padding-top: 0.5rem !important;
+    line-height: 1.3 !important;
+  }
+  .fl-app-header span {
+    display: inline-block;
+    line-height: 1.2 !important;
   }
   .fl-panel-banner {
     margin-bottom: 1.15rem !important;
@@ -838,9 +850,9 @@ def render_auth() -> None:
     st.markdown(EDITOR_CSS, unsafe_allow_html=True)
     st.markdown(
         f"""
-<div class="fl-app-header" style="text-align:center; margin:1.5rem 0 1.25rem;">
+<div class="fl-app-header" style="text-align:center; margin:0.5rem 0 1.25rem;">
   <span style="font-size:1.75rem; font-weight:800; color:#0f172a; letter-spacing:-0.03em;">{APP_NAME}</span>
-  <p style="font-size:0.95rem; color:#64748b; margin:0.45rem 0 0; line-height:1.55;">
+  <p style="font-size:0.95rem; color:#64748b; margin:0.55rem 0 0; line-height:1.55;">
     Free account — your resume is saved so you can pick up where you left off.
   </p>
 </div>
@@ -1318,26 +1330,6 @@ def render_chat_column(strong: bool, use_ai: bool, provider: str) -> None:
 def render_app() -> None:
     st.markdown(EDITOR_CSS, unsafe_allow_html=True)
 
-    st.markdown(
-        f"""
-<div class="fl-app-header" style="
-  font-family: 'Inter', system-ui, sans-serif;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-">
-  <div>
-    <span style="font-size: 1.75rem; font-weight: 800; color: #0f172a; letter-spacing: -0.03em;">{APP_NAME}</span>
-    <span style="font-size: 0.95rem; color: #64748b; margin-left: 0.85rem;">{APP_TAGLINE}</span>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
     if not st.session_state.source_tex:
         st.info(
             "**Get started:** Paste your LaTeX below and click **Load resume**. "
@@ -1351,6 +1343,11 @@ def render_app() -> None:
             )
 
     with st.sidebar:
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:#64748b;margin:0 0 0.65rem;line-height:1.45;">'
+            f'<strong style="color:#0f172a;font-size:0.95rem;">{APP_NAME}</strong><br>{APP_TAGLINE}</p>',
+            unsafe_allow_html=True,
+        )
         if st.button("← Home", use_container_width=True):
             st.session_state.in_app = False
             st.rerun()
