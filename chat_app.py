@@ -18,7 +18,7 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
-from auth import authenticate, create_account, count_users, is_admin, load_user_work, save_user_work
+from fitline_auth import authenticate, create_account, count_users, is_admin, load_user_work, save_user_work
 from bullet_strong import bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
