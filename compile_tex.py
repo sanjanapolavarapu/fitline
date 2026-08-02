@@ -70,8 +70,34 @@ _CORRUPT_ENDCENTER = re.compile(r"\\end\{center\\rolefit")
 _CORRUPT_ENDCENTER2 = re.compile(r"\\end\{center\\role(?![a-zA-Z])")
 
 
+def _normalize_document_start(tex: str) -> str:
+    """
+    Remove stray characters/lines before \\documentclass.
+    Fixes pastes like ``e%---`` where a typo sits before the first comment.
+    """
+    m = re.search(r"\\documentclass\b", tex)
+    if not m:
+        return tex
+    before = tex[: m.start()]
+    after = tex[m.start() :]
+    cleaned: list[str] = []
+    for line in before.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if not stripped.strip():
+            cleaned.append(line)
+            continue
+        pct = stripped.find("%")
+        if pct >= 0 and (pct == 0 or stripped[pct - 1] != "\\"):
+            newline = "\n" if line.endswith("\n") else ""
+            cleaned.append(stripped[pct:] + newline)
+            continue
+        # Drop non-comment garbage (e.g. a lone "e" before "% Resume in Latex")
+    return "".join(cleaned) + after
+
+
 def _sanitize_corrupted_tex(tex: str) -> str:
     """Repair known LaTeX corruption patterns from bad section splices."""
+    tex = _normalize_document_start(tex)
     if _CORRUPT_ENDCENTER.search(tex) or _CORRUPT_ENDCENTER2.search(tex):
         tex = _CORRUPT_ENDCENTER.sub(r"\\rolefit", tex)
         tex = _CORRUPT_ENDCENTER2.sub(r"\\role", tex)
@@ -109,8 +135,40 @@ def _fix_chicago_role_usages(tex: str) -> str:
     return "".join(out)
 
 
+def _strip_latex_comments(tex: str) -> str:
+    """Remove full-line and inline % comments (ignore escaped \\%)."""
+    out: list[str] = []
+    for line in tex.splitlines(keepends=True):
+        cleaned: list[str] = []
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if ch == "%" and (i == 0 or line[i - 1] != "\\"):
+                break
+            cleaned.append(ch)
+            i += 1
+        out.append("".join(cleaned))
+    return "".join(out)
+
+
+def _has_documentclass(tex: str) -> bool:
+    return bool(re.search(r"\\documentclass\b", _strip_latex_comments(tex)))
+
+
+def _has_active_begin_document(tex: str) -> bool:
+    return bool(re.search(r"\\begin\{document\}", _strip_latex_comments(tex)))
+
+
+def _has_active_end_document(tex: str) -> bool:
+    return bool(re.search(r"\\end\{document\}", _strip_latex_comments(tex)))
+
+
 def _is_complete_document(tex: str) -> bool:
-    return bool(re.search(r"\\documentclass\b", tex) and re.search(r"\\begin\{document\}", tex))
+    stripped = _strip_latex_comments(tex)
+    return bool(
+        re.search(r"\\documentclass\b", stripped)
+        and re.search(r"\\begin\{document\}", stripped)
+    )
 
 
 def _strip_orphan_preamble(tex: str) -> str:
@@ -126,6 +184,11 @@ def _strip_body_packages(tex: str) -> str:
 def _wrap_for_preview(tex: str) -> str:
     body = _strip_orphan_preamble(tex)
     if _is_complete_document(body):
+        return body
+    if _has_documentclass(body):
+        body = _insert_begin_document(body)
+        if not _has_active_end_document(body):
+            body = body.rstrip() + PREVIEW_POSTAMBLE
         return body
     body = _strip_body_packages(body).strip()
     return PREVIEW_PREAMBLE + body + PREVIEW_POSTAMBLE
@@ -173,7 +236,7 @@ def _patch_for_compile(tex: str, for_xetex: bool = False) -> str:
 
 
 def _insert_begin_document(tex: str) -> str:
-    if r"\begin{document}" in tex:
+    if _has_active_begin_document(tex):
         return tex
     markers = (
         r"\name{",
@@ -182,15 +245,15 @@ def _insert_begin_document(tex: str) -> str:
         r"\role{",
         r"\rolefit{",
         r"\resumeSubheading{",
+        r"\resumeSubHeadingListStart",
+        r"\resumeItemListStart",
         r"\begin{center}",
         r"\begin{itemize}",
     )
-    insert_at = len(tex)
-    for marker in markers:
-        pos = tex.find(marker)
-        if pos >= 0:
-            insert_at = min(insert_at, pos)
-    if insert_at < len(tex):
+    marker_pat = r"(?m)^\s*(?:" + "|".join(re.escape(m) for m in markers) + ")"
+    m = re.search(marker_pat, tex)
+    if m:
+        insert_at = m.start()
         return tex[:insert_at].rstrip() + "\n\n\\begin{document}\n\n" + tex[insert_at:].lstrip()
     return tex.rstrip() + "\n\\begin{document}\n"
 
@@ -213,6 +276,23 @@ def _fix_stray_item_braces(tex: str) -> str:
     return "".join(lines)
 
 
+def _force_preview_document(tex: str) -> str:
+    """Wrap resume body in a self-contained preview document (drops broken preamble)."""
+    body = _strip_orphan_preamble(tex)
+    stripped = _strip_latex_comments(body)
+    if _has_active_begin_document(stripped):
+        m = re.search(r"\\begin\{document\}", stripped)
+        if m:
+            start = m.end()
+            end_match = re.search(r"\\end\{document\}", stripped[m.end() :])
+            end = m.end() + end_match.start() if end_match else len(stripped)
+            body = stripped[start:end].strip()
+    else:
+        body = re.sub(r"\\documentclass[^\n]*\n?", "", stripped)
+        body = _strip_body_packages(body).strip()
+    return PREVIEW_PREAMBLE + body + PREVIEW_POSTAMBLE
+
+
 def auto_repair_tex(tex: str, error: str | None = None) -> tuple[str, str | None]:
     """
     Repair common LaTeX structure problems for preview.
@@ -225,36 +305,32 @@ def auto_repair_tex(tex: str, error: str | None = None) -> tuple[str, str | None
     tex = _sanitize_corrupted_tex(tex)
     tex = _strip_orphan_preamble(tex)
 
-    needs_document = (
-        ("missing" in err and "begin{document}" in err)
-        or not _is_complete_document(tex)
-    )
-    if needs_document:
-        if not re.search(r"\\documentclass\b", tex):
-            tex = _strip_body_packages(tex).strip()
-            tex = PREVIEW_PREAMBLE + tex + PREVIEW_POSTAMBLE
-            fixes.append("wrapped content in a preview document")
-        else:
-            if not re.search(r"\\begin\{document\}", tex):
-                tex = _insert_begin_document(tex)
-                fixes.append("added \\begin{document}")
-            if not re.search(r"\\end\{document\}", tex):
-                tex = tex.rstrip() + PREVIEW_POSTAMBLE
-                fixes.append("added \\end{document}")
-
-    if (
+    missing_begin = "missing" in err and "begin{document}" in err
+    preamble_order = (
         "usepackage before \\documentclass" in err
         or "can be used only in preamble" in err
-        or (
-            tex.strip().startswith(r"\usepackage")
-            and not re.search(r"\\documentclass\b", tex)
-        )
+    )
+
+    if preamble_order or (
+        tex.strip().startswith(r"\usepackage") and not _has_documentclass(tex)
     ):
-        tex = _strip_orphan_preamble(tex)
-        if not _is_complete_document(tex):
-            tex = _strip_body_packages(tex).strip()
-            tex = PREVIEW_PREAMBLE + tex + PREVIEW_POSTAMBLE
-            fixes.append("fixed package order for preview")
+        tex = _force_preview_document(tex)
+        fixes.append("fixed the document structure for preview")
+
+    elif missing_begin or not _is_complete_document(tex):
+        if not _has_documentclass(tex):
+            tex = _force_preview_document(tex)
+            fixes.append("wrapped your content in a preview document")
+        else:
+            if not _has_active_begin_document(tex):
+                tex = _insert_begin_document(tex)
+                fixes.append("added \\begin{document}")
+            if not _has_active_end_document(tex):
+                tex = tex.rstrip() + PREVIEW_POSTAMBLE
+                fixes.append("added \\end{document}")
+        if missing_begin and tex == original:
+            tex = _force_preview_document(tex)
+            fixes.append("fixed the document structure for preview")
 
     if any(k in err for k in ("extra }", "forgotten \\endgroup", "forgotten $")):
         tex = _fix_stray_item_braces(tex)
@@ -262,9 +338,9 @@ def auto_repair_tex(tex: str, error: str | None = None) -> tuple[str, str | None
 
     if tex != original:
         if fixes:
-            notice = "I auto-fixed the preview (" + ", ".join(fixes) + ")."
+            notice = "I fixed this for you (" + ", ".join(fixes) + ")."
         else:
-            notice = "I auto-fixed the LaTeX so the preview can render."
+            notice = "I fixed your LaTeX so the preview can render."
         return tex, notice
     return tex, None
 
@@ -294,10 +370,27 @@ def _find_pdflatex() -> str | None:
     path = shutil.which("pdflatex")
     if path:
         return path
-    # BasicTeX default install location on macOS
-    mac_path = Path("/Library/TeX/texbin/pdflatex")
-    if mac_path.exists():
-        return str(mac_path)
+    # BasicTeX / MacTeX default install location on macOS
+    for candidate in (
+        Path("/Library/TeX/texbin/pdflatex"),
+        Path("/usr/local/texlive/2024/bin/universal-darwin/pdflatex"),
+        Path("/usr/local/texlive/2023/bin/universal-darwin/pdflatex"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _find_tectonic() -> str | None:
+    path = shutil.which("tectonic")
+    if path:
+        return path
+    for candidate in (
+        Path("/opt/homebrew/bin/tectonic"),
+        Path("/usr/local/bin/tectonic"),
+    ):
+        if candidate.exists():
+            return str(candidate)
     return None
 
 
@@ -329,9 +422,18 @@ def _compile_pdflatex(work: Path) -> tuple[bytes | None, str | None]:
 
 
 def _compile_tectonic(work: Path) -> tuple[bytes | None, str | None]:
-    tectonic = shutil.which("tectonic")
+    tectonic = _find_tectonic()
     if not tectonic:
-        return None, "No LaTeX compiler found. Run: brew install --cask basictex"
+        return None, (
+            "No LaTeX compiler found. Install one of:\n"
+            "• `brew install tectonic` (fastest)\n"
+            "• `brew install --cask basictex` then restart the app"
+        )
+
+    env = os.environ.copy()
+    tectonic_bin = Path(tectonic).parent
+    if str(tectonic_bin) not in env.get("PATH", ""):
+        env["PATH"] = f"{tectonic_bin}:{env.get('PATH', '')}"
 
     result = subprocess.run(
         [tectonic, "resume.tex"],
@@ -339,6 +441,7 @@ def _compile_tectonic(work: Path) -> tuple[bytes | None, str | None]:
         capture_output=True,
         text=True,
         timeout=120,
+        env=env,
     )
 
     pdf_path = work / "resume.pdf"
@@ -387,11 +490,20 @@ def compile_tex_to_pdf(tex: str) -> tuple[bytes | None, str | None, str | None, 
             return pdf, None, repaired, fix_notice
 
         if attempt == 0:
-            repaired, notice = auto_repair_tex(tex, err)
-            if repaired != tex:
+            repaired, notice = auto_repair_tex(working, err)
+            if repaired != working:
                 working = repaired
                 fix_notice = notice or fix_notice
                 continue
+            err_l = (err or "").lower()
+            if "missing" in err_l and "begin{document}" in err_l:
+                forced = _force_preview_document(working)
+                if forced != working:
+                    working = forced
+                    fix_notice = fix_notice or (
+                        "I fixed this for you (fixed the document structure for preview)."
+                    )
+                    continue
         return None, err, None, None
 
     return None, err, None, None
