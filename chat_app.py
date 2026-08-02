@@ -18,7 +18,6 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
-from fitline_auth import authenticate, create_account, count_users, is_admin, load_user_work, save_user_work
 from bullet_strong import bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
@@ -32,19 +31,30 @@ from sections import (
 )
 from chat_intent import help_message, parse_chat_intent, resolve_bullet_indices, active_section
 
-# Set True later to require sign-up / log-in before the editor.
-AUTH_REQUIRED = True
-
 EDITOR_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  #MainMenu, footer, header[data-testid="stHeader"],
+  div[data-testid="stToolbar"],
+  div[data-testid="stToolbarActions"],
+  div[data-testid="stDecoration"],
+  [data-testid="stToolbarActionButton"],
+  [data-testid="stToolbarActionButtonIcon"],
+  .viewerBadge_container__1QSob,
+  .styles_viewerBadge__1yB5_ {
+    visibility: hidden !important;
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
   .stApp {
     font-family: 'Inter', system-ui, sans-serif !important;
     background: #eef2f7 !important;
   }
   section.main > div.block-container,
   .block-container {
-    padding-top: 1.25rem !important;
+    padding-top: 1.5rem !important;
     padding-left: 2.5rem !important;
     padding-right: 2.5rem !important;
     padding-bottom: 2rem !important;
@@ -107,6 +117,12 @@ EDITOR_CSS = """
   }
   .fl-app-header {
     margin-bottom: 1.25rem !important;
+    padding-top: 0.5rem !important;
+    line-height: 1.3 !important;
+  }
+  .fl-app-header span {
+    display: inline-block;
+    line-height: 1.2 !important;
   }
   .fl-panel-banner {
     margin-bottom: 1.15rem !important;
@@ -379,59 +395,6 @@ def compile_and_store(tex: str, *, which: str) -> str | None:
     return notice if pdf and notice else None
 
 
-def _current_user_email() -> str | None:
-    if not AUTH_REQUIRED or not st.session_state.get("authenticated"):
-        return None
-    user = st.session_state.get("user") or {}
-    return user.get("email")
-
-
-def persist_user_work() -> None:
-    """Save resume + chat to the logged-in account."""
-    email = _current_user_email()
-    if not email or not st.session_state.get("source_tex"):
-        return
-    save_user_work(
-        email,
-        {
-            "source_tex": st.session_state.source_tex,
-            "working_tex": st.session_state.working_tex,
-            "fixed_tex": st.session_state.fixed_tex,
-            "source_label": st.session_state.source_label,
-            "paste_buffer": st.session_state.paste_buffer,
-            "messages": st.session_state.messages[-20:],
-            "selected_section": st.session_state.selected_section,
-        },
-    )
-
-
-def restore_user_work(user: dict) -> None:
-    """Load saved resume + chat after login."""
-    email = user.get("email")
-    if not email:
-        return
-    saved = load_user_work(email)
-    if not saved or not saved.get("source_tex"):
-        return
-    tex = _sanitize_stored_tex(saved["source_tex"])
-    st.session_state.paste_buffer = saved.get("paste_buffer") or tex
-    st.session_state.source_tex = tex
-    st.session_state.working_tex = saved.get("working_tex") or tex
-    st.session_state.fixed_tex = saved.get("fixed_tex")
-    st.session_state.source_label = saved.get("source_label") or "saved resume"
-    st.session_state.messages = saved.get("messages") or []
-    if saved.get("selected_section"):
-        st.session_state.selected_section = saved["selected_section"]
-    st.session_state.experiences = parse_experiences(tex)
-    if not st.session_state.experiences:
-        st.session_state.experiences = list_itemize_blocks(tex)
-    st.session_state.line_chars = effective_line_chars(tex)
-    with st.spinner("Restoring your saved resume…"):
-        compile_and_store(tex, which="source")
-        if st.session_state.fixed_tex:
-            compile_and_store(st.session_state.fixed_tex, which="fixed")
-
-
 def load_resume(tex: str, label: str = "pasted resume") -> None:
     tex = flatten_resume_bullets(_sanitize_stored_tex(tex))
     st.session_state.source_tex = tex
@@ -447,7 +410,6 @@ def load_resume(tex: str, label: str = "pasted resume") -> None:
     st.session_state.line_chars = effective_line_chars(tex)
     with st.spinner("Compiling PDF preview…"):
         compile_and_store(tex, which="source")
-    persist_user_work()
 
 
 def active_api_key(provider: str) -> str | None:
@@ -501,7 +463,8 @@ def apply_fix(
     if not base:
         return "Paste your LaTeX above and click **Load resume** first."
 
-    line_chars = st.session_state.get("line_chars") or line_chars_for(base)
+    line_chars = line_chars_for(base)
+    st.session_state.line_chars = line_chars
 
     company_arg = None if not company or company == "All sections" else company
     block = resolve_selection(base, company_arg) if company_arg else None
@@ -511,22 +474,25 @@ def apply_fix(
     resolved_key = active_api_key(provider) if api_key is None else resolve_api_key(provider, api_key)  # type: ignore[arg-type]
     resolved_key = resolved_key or None
 
+    use_ai_for_fix = use_ai and bool(resolved_key)
     if use_ai and not resolved_key:
-        return (
-            "⚠️ **No API key detected.** Paste your Gemini key in the sidebar first, "
-            "then click **Fix selected section** again. Also pick a **specific experience** "
-            "(not “All sections”) for AI rewrite."
+        rules_fallback_note = (
+            "No Gemini key in sidebar — used **rule-based** line fill. "
+            "Paste a free key for smarter rewrites."
         )
-    if use_ai and not company_arg:
+    else:
+        rules_fallback_note = ""
+
+    if use_ai_for_fix and not company_arg:
         return (
-            "⚠️ Pick a **specific experience** in the sidebar (not “All sections”) — "
-            "AI rewrite runs one job at a time."
+            "⚠️ Pick a **specific section** in the sidebar (not “All sections”) — "
+            "AI rewrite runs one section at a time."
         )
 
     if bullet_indices is not None and not bullet_indices:
         return "⚠️ Pick at least **one bullet** to fix in the sidebar."
 
-    spinner_msg = "Rewriting bullets with AI…" if use_ai and resolved_key else "Tightening bullets…"
+    spinner_msg = "Rewriting bullets with AI…" if use_ai_for_fix else "Tightening bullets…"
 
     with st.spinner(spinner_msg):
         importlib.reload(ai_rewriter)
@@ -537,7 +503,7 @@ def apply_fix(
             max_chars=line_chars,
             company=company_arg,
             api_key=resolved_key,
-            use_ai=use_ai,
+            use_ai=use_ai_for_fix,
             provider=provider,
             feedback=feedback,
             bullet_indices=bullet_indices,
@@ -561,8 +527,6 @@ def apply_fix(
     with st.spinner("Updating PDF preview…"):
         compile_and_store(result, which="fixed")
 
-    persist_user_work()
-
     section = stats.get("section", "resume")
     mode = stats.get("mode", "rules")
     ai_note = stats.get("ai_note") or ""
@@ -570,6 +534,9 @@ def apply_fix(
         "**rule-based** (kept your numbers)" if mode == "rules" and ai_note else "**rule-based** trim"
     )
     parts: list[str] = []
+
+    if rules_fallback_note:
+        parts.append(f"ℹ️ {rules_fallback_note}\n\n")
 
     if ai_note and mode != "ai":
         low = ai_note.lower()
@@ -714,9 +681,6 @@ def init_state() -> None:
         "converted_pdf_name": None,
         "converted_pdf_error": None,
         "in_app": False,
-        "authenticated": False,
-        "user": None,
-        "auth_view": "login",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -777,7 +741,7 @@ def render_pdf_panel(*, height: int = 780) -> None:
             with st.expander("View fixed LaTeX"):
                 st.code(st.session_state.fixed_tex, language="latex")
         else:
-            st.info("Pick a job in the sidebar and click **Fix selected section**.")
+            st.info("Pick a section in the sidebar and click **Fix selected section**.")
 
 
 def render_api_key_sidebar(provider: str, use_ai: bool) -> None:
@@ -833,86 +797,8 @@ def render_api_key_sidebar(provider: str, use_ai: bool) -> None:
             st.warning("OpenAI requires a paid API key.")
 
 
-def render_auth() -> None:
-    """Sign up / log in before entering the editor."""
-    st.markdown(EDITOR_CSS, unsafe_allow_html=True)
-    st.markdown(
-        f"""
-<div class="fl-app-header" style="text-align:center; margin:1.5rem 0 1.25rem;">
-  <span style="font-size:1.75rem; font-weight:800; color:#0f172a; letter-spacing:-0.03em;">{APP_NAME}</span>
-  <p style="font-size:0.95rem; color:#64748b; margin:0.45rem 0 0; line-height:1.55;">
-    Free account — your resume is saved so you can pick up where you left off.
-  </p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-    st.info(
-        "**Privacy:** We store your email, a hashed password, and your saved resume on this server. "
-        "We don't sell data. Gemini API keys stay in your browser only — never saved."
-    )
-
-    col_l, col_m, col_r = st.columns([1, 1.15, 1])
-    with col_m:
-        tab_login, tab_signup = st.tabs(["Log in", "Create account"])
-
-        with tab_login:
-            email = st.text_input("Email", key="login_email", placeholder="you@email.com")
-            password = st.text_input("Password", type="password", key="login_password")
-            if st.button("Log in", type="primary", use_container_width=True):
-                ok, msg, user = authenticate(email, password)
-                if ok and user:
-                    st.session_state.authenticated = True
-                    st.session_state.user = user
-                    st.session_state.in_app = True
-                    restore_user_work(user)
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-        with tab_signup:
-            name = st.text_input("Name", key="signup_name", placeholder="Your name")
-            email = st.text_input("Email", key="signup_email", placeholder="you@email.com")
-            password = st.text_input("Password", type="password", key="signup_password")
-            confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
-            st.caption("Password must be at least 8 characters.")
-            if st.button("Create account", type="primary", use_container_width=True):
-                if password != confirm:
-                    st.error("Passwords don't match.")
-                else:
-                    ok, msg = create_account(email, password, name)
-                    if ok:
-                        _, _, user = authenticate(email, password)
-                        st.session_state.authenticated = True
-                        st.session_state.user = user
-                        st.session_state.in_app = True
-                        restore_user_work(user)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-        st.divider()
-        if st.button("← Back to home", use_container_width=True):
-            st.session_state.in_app = False
-            st.rerun()
-
-
 def render_sidebar_controls() -> tuple[str, bool, bool]:
-    """Sidebar: account, API key, settings, fix controls. Returns (provider, use_ai, strong)."""
-    if AUTH_REQUIRED:
-        user = st.session_state.get("user") or {}
-        st.caption(f"Signed in as **{user.get('name', 'User')}**")
-        if st.session_state.get("source_tex"):
-            st.caption(f"Resume: **{st.session_state.source_label or 'loaded'}**")
-        if is_admin(user.get("email", "")):
-            st.caption(f"📊 **{count_users()}** registered users")
-        if st.button("Log out", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.user = None
-            st.session_state.in_app = False
-            st.rerun()
-        st.divider()
-
+    """Sidebar: API key, settings, fix controls. Returns (provider, use_ai, strong)."""
     provider = st.radio(
         "AI provider",
         options=["gemini", "openai"],
@@ -945,13 +831,13 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
 
     exp_labels = [e.label for e in st.session_state.experiences]
     if not exp_labels and st.session_state.source_tex:
-        exp_labels = [e.label for e in list_itemize_blocks(st.session_state.source_tex)]
-        st.session_state.experiences = list_itemize_blocks(st.session_state.source_tex)
+        exp_labels = [e.label for e in parse_experiences(st.session_state.source_tex) or list_itemize_blocks(st.session_state.source_tex)]
+        st.session_state.experiences = parse_experiences(st.session_state.source_tex) or list_itemize_blocks(st.session_state.source_tex)
 
     diag = diagnose_tex(st.session_state.source_tex or "")
 
     if not exp_labels and st.session_state.source_tex:
-        st.error("No jobs detected in your paste.")
+        st.error("No sections detected in your paste.")
         if diag["company_hints"]:
             st.caption("Companies found near bullets: " + ", ".join(diag["company_hints"][:6]))
         manual = st.text_input(
@@ -975,7 +861,7 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
         st.session_state.selected_section = exp_labels[0]
 
     selected = st.selectbox(
-        "Experience / project",
+        "Section / role",
         options=exp_labels,
         index=exp_labels.index(st.session_state.selected_section)
         if st.session_state.selected_section in exp_labels
@@ -986,7 +872,9 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
     section_bullets = bullets_for_section(selected)
     picked_bullet_indices: set[int] | None = None
     if section_bullets:
-        render_bullet_line_analysis(section_bullets, st.session_state.get("line_chars") or 98)
+        line_chars = line_chars_for(st.session_state.working_tex or st.session_state.source_tex)
+        st.session_state.line_chars = line_chars
+        render_bullet_line_analysis(section_bullets, line_chars)
         st.caption("Which bullets should we fix?")
         bullet_options = list(range(len(section_bullets)))
         picked = st.multiselect(
@@ -1047,7 +935,7 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
 
     if st.session_state.source_tex:
         st.caption(f"Loaded: {st.session_state.source_label}")
-        st.caption(f"{len(st.session_state.experiences)} experiences found")
+        st.caption(f"{len(st.session_state.experiences)} sections found")
 
     return provider, use_ai, strong
 
@@ -1064,7 +952,7 @@ def render_resume_section() -> None:
     with st.expander(label, expanded=not loaded):
         if loaded:
             st.caption(
-                f"**{len(st.session_state.experiences)}** jobs detected · "
+                f"**{len(st.session_state.experiences)}** sections detected · "
                 "Edit below and click **Reload** to refresh the preview."
             )
         else:
@@ -1124,7 +1012,7 @@ def render_resume_section() -> None:
                 st.session_state.paste_buffer = content
                 load_resume(content, uploaded.name)
                 st.session_state.messages = [
-                    {"role": "assistant", "content": f"Loaded `{uploaded.name}`. Pick an experience in the sidebar."}
+                    {"role": "assistant", "content": f"Loaded `{uploaded.name}`. Pick a section in the sidebar."}
                 ]
                 st.rerun()
 
@@ -1158,7 +1046,7 @@ def render_resume_section() -> None:
                     if short_n:
                         msg += (
                             f"\n\n⚠️ **{short_n} bullet(s) look too short.** "
-                            "Pick a job in the sidebar and click **Fix selected section**."
+                            "Pick a section in the sidebar and click **Fix selected section**."
                         )
                     st.session_state.messages = [{"role": "assistant", "content": msg}]
             st.rerun()
@@ -1255,7 +1143,7 @@ def render_chat_column(strong: bool, use_ai: bool, provider: str) -> None:
             st.session_state.paste_buffer = prompt
             load_resume(prompt)
             reply = (
-                f"Loaded! **{len(st.session_state.experiences)}** experiences found. Pick one in the sidebar."
+                f"Loaded! **{len(st.session_state.experiences)}** sections found. Pick one in the sidebar."
                 if st.session_state.experiences
                 else "Loaded! Pick a company in the sidebar after adding your Gemini key."
             )
@@ -1318,30 +1206,10 @@ def render_chat_column(strong: bool, use_ai: bool, provider: str) -> None:
 def render_app() -> None:
     st.markdown(EDITOR_CSS, unsafe_allow_html=True)
 
-    st.markdown(
-        f"""
-<div class="fl-app-header" style="
-  font-family: 'Inter', system-ui, sans-serif;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-">
-  <div>
-    <span style="font-size: 1.75rem; font-weight: 800; color: #0f172a; letter-spacing: -0.03em;">{APP_NAME}</span>
-    <span style="font-size: 0.95rem; color: #64748b; margin-left: 0.85rem;">{APP_TAGLINE}</span>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
     if not st.session_state.source_tex:
         st.info(
             "**Get started:** Paste your LaTeX below and click **Load resume**. "
-            "Pick a job in the sidebar and click **Fix selected section** — preview updates live on the right."
+            "Pick a section in the sidebar and click **Fix selected section** — preview updates live on the right."
         )
         if st.session_state.use_ai and not active_api_key(st.session_state.ai_provider):
             st.warning(
@@ -1351,6 +1219,11 @@ def render_app() -> None:
             )
 
     with st.sidebar:
+        st.markdown(
+            f'<p style="font-size:0.82rem;color:#64748b;margin:0 0 0.65rem;line-height:1.45;">'
+            f'<strong style="color:#0f172a;font-size:0.95rem;">{APP_NAME}</strong><br>{APP_TAGLINE}</p>',
+            unsafe_allow_html=True,
+        )
         if st.button("← Home", use_container_width=True):
             st.session_state.in_app = False
             st.rerun()
@@ -1379,9 +1252,6 @@ if __name__ == "__main__":
     st.set_page_config(page_title=APP_NAME, page_icon="📄", layout="wide")
     init_state()
     if st.session_state.in_app:
-        if AUTH_REQUIRED and not st.session_state.authenticated:
-            render_auth()
-        else:
-            render_app()
+        render_app()
     else:
         render_landing()

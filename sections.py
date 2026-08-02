@@ -220,6 +220,7 @@ def _block_from_command(
         dates=dates,
         start=cmd_start,
         end=args_end + iz.end(),
+        section_name=_section_name_at(tex, cmd_start),
     )
 
 
@@ -356,6 +357,7 @@ def _parse_itemize_fallback(tex: str) -> list[ExperienceBlock]:
                 dates=dates,
                 start=start,
                 end=iz.end(),
+                section_name=_section_name_at(tex, iz.start()),
             )
         )
 
@@ -371,37 +373,148 @@ class ExperienceBlock:
     dates: str
     start: int
     end: int
+    section_name: str = ""
 
     @property
     def label(self) -> str:
-        return f"{self.company} — {self.title}"
+        name = self.company or self.title or "Section"
+        role = self.title if self.title and self.title != self.company else ""
+        sec = (self.section_name or "").strip().lower()
+        if sec and sec not in {"experience", "professional experience", "work experience"}:
+            sec_label = self.section_name.strip().title()
+            if name.lower() == sec or name.lower() == sec_label.lower():
+                return sec_label
+            if role and role not in (name, "Bullets", "Project", "Entry"):
+                return f"{sec_label}: {name} — {role}"
+            return f"{sec_label}: {name}"
+        if role and role not in (name, "Bullets"):
+            return f"{name} — {role}"
+        return name
+
+
+def _header_before_itemize(tex: str, iz_start: int, *, max_chars: int = 1200) -> str:
+    """Header text immediately above a bullet list, staying within the current \\section."""
+    chunk = tex[max(0, iz_start - max_chars) : iz_start]
+    parts = re.split(r"\\section\{[^}]+\}", chunk, flags=re.I)
+    return parts[-1] if parts else chunk
+
+
+def _block_specificity(block: ExperienceBlock) -> int:
+    score = 0
+    if block.dates:
+        score += 4
+    if block.section_name:
+        score += 1
+    if block.title not in ("Bullets", "Entry"):
+        score += 2
+    return score
+
+
+def _merge_experience_blocks(blocks: list[ExperienceBlock]) -> list[ExperienceBlock]:
+    if not blocks:
+        return []
+    ordered = sorted(blocks, key=lambda b: (b.start, -(b.end - b.start)))
+    drop = [False] * len(ordered)
+    for i, outer in enumerate(ordered):
+        if drop[i]:
+            continue
+        for j, inner in enumerate(ordered):
+            if i == j or drop[j]:
+                continue
+            if inner.start >= outer.start and inner.end <= outer.end:
+                if _block_specificity(inner) >= _block_specificity(outer):
+                    drop[i] = True
+                else:
+                    drop[j] = True
+    kept = [b for b, d in zip(ordered, drop) if not d]
+    return sorted(kept, key=lambda b: b.start)
+
+
+def _uncovered_itemize_blocks(tex: str, existing: list[ExperienceBlock]) -> list[ExperienceBlock]:
+    """Bullet lists under Projects, Leadership, Awards, etc. not already tied to a heading macro."""
+    extra: list[ExperienceBlock] = []
+    for iz in iter_list_blocks(tex):
+        if _should_skip_itemize(tex, iz.start()):
+            continue
+        if not _block_has_bullets(iz.group(0)):
+            continue
+        if any(b.start <= iz.start() and iz.end() <= b.end for b in existing):
+            continue
+
+        section = _section_name_at(tex, iz.start())
+        header = _header_before_itemize(tex, iz.start())
+        company = title = ""
+
+        for rm in ROLE_CMD_RE.finditer(header):
+            parsed = _read_n_args(tex, rm.end(), 4)
+            if parsed:
+                company, _, title, _ = parsed[0]
+                break
+        else:
+            sub_m = None
+            for sm in SUBHEADING_CMD_RE.finditer(header):
+                sub_m = sm
+            if sub_m:
+                parsed = _read_n_args(tex, sub_m.end(), 4)
+                if parsed:
+                    title, _, company, _ = parsed[0]
+            else:
+                proj_m = None
+                for pm in PROJECT_HEADING_CMD_RE.finditer(header):
+                    proj_m = pm
+                if proj_m:
+                    parsed = _read_n_args(tex, proj_m.end(), 2)
+                    if parsed:
+                        title, _ = parsed[0]
+                        company = title
+                else:
+                    bold = list(re.finditer(r"\\textbf\{([^{}]+)\}", header))
+                    if bold:
+                        company = _strip_latex(bold[-1].group(1))
+                        title_m = re.findall(r"\\textit\{([^{}]+)\}", header)
+                        title = _strip_latex(title_m[-1]) if title_m else ""
+                    else:
+                        company, title, _ = _company_from_plain_header(header)
+
+        if not company and not title:
+            if section:
+                company = section.title()
+                title = "Bullets"
+            else:
+                continue
+
+        extra.append(
+            ExperienceBlock(
+                company=company or title,
+                location="",
+                title=title or company,
+                dates="",
+                start=iz.start(),
+                end=iz.end(),
+                section_name=section,
+            )
+        )
+    return extra
 
 
 def parse_experiences(tex: str) -> list[ExperienceBlock]:
-    blocks = _parse_role_commands(tex)
-    if not blocks:
-        blocks = _parse_subheading_commands(tex)
-    if not blocks:
-        blocks = _parse_project_heading_commands(tex)
-    if not blocks:
-        blocks = _parse_cventry_commands(tex)
-    if not blocks:
+    """All fixable resume sections: experience, projects, leadership, volunteer, awards, etc."""
+    blocks: list[ExperienceBlock] = []
+    blocks.extend(_parse_role_commands(tex))
+    blocks.extend(_parse_subheading_commands(tex))
+    blocks.extend(_parse_project_heading_commands(tex))
+    blocks.extend(_parse_cventry_commands(tex))
+    if blocks:
+        blocks = _merge_experience_blocks(blocks)
+        blocks.extend(_uncovered_itemize_blocks(tex, blocks))
+        blocks = _merge_experience_blocks(blocks)
+    else:
         blocks = _parse_itemize_fallback(tex)
-
-    # De-dupe overlapping blocks (prefer earlier/longer parse)
-    unique: list[ExperienceBlock] = []
-    for block in sorted(blocks, key=lambda b: (b.start, -(b.end - b.start))):
-        if any(
-            block.start >= u.start and block.end <= u.end and block != u
-            for u in unique
-        ):
-            continue
-        unique.append(block)
-    return sorted(unique, key=lambda b: b.start)
+    return blocks
 
 
 def _matches_query(block: ExperienceBlock, q: str) -> bool:
-    hay = f"{block.company} {block.title} {block.location}".lower()
+    hay = f"{block.label} {block.company} {block.title} {block.location} {block.section_name}".lower()
     if q in hay:
         return True
     for part in (block.company, block.title):
@@ -511,6 +624,7 @@ def _block_from_itemize(
         dates="",
         start=start,
         end=iz.end(),
+        section_name=_section_name_at(tex, start),
     )
 
 
@@ -522,7 +636,7 @@ def list_itemize_blocks(tex: str) -> list[ExperienceBlock]:
             continue
         if not _block_has_bullets(iz.group(0)):
             continue
-        header = tex[max(0, iz.start() - 1200) : iz.start()]
+        header = _header_before_itemize(tex, iz.start())
         company = title = ""
         for rm in ROLE_CMD_RE.finditer(header):
             parsed = _read_n_args(tex, rm.end(), 4)
@@ -603,9 +717,9 @@ def find_best_block(tex: str, query: str | None) -> tuple[ExperienceBlock | None
 def format_not_found_error(tex: str, query: str) -> str:
     diag = diagnose_tex(tex)
     hints = diag["company_hints"]
-    msg = f"No experience matching **{query}** in your pasted LaTeX."
+    msg = f"No section matching **{query}** in your pasted LaTeX."
     if hints:
-        msg += f"\n\nJobs detected in your paste: **{', '.join(hints[:8])}**"
+        msg += f"\n\nSections detected in your paste: **{', '.join(hints[:8])}**"
         msg += "\n\nPick one of those from the dropdown, or paste your full `main.tex` from Overleaf **Source** view."
     elif diag["role_commands"] or diag["itemize_blocks"]:
         msg += (

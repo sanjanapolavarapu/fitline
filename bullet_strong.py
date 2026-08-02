@@ -412,9 +412,33 @@ def _expand_toward_limit(original: str, current: str, max_chars: int) -> str:
     return _normalize(result) if len(result) <= max_chars else current
 
 
+def _dedupe_clauses(text: str) -> str:
+    """Drop trailing clauses that repeat an earlier phrase (common after AI + pad)."""
+    parts = [p.strip() for p in re.split(r",\s+", text.strip()) if p.strip()]
+    if len(parts) < 2:
+        return text.strip()
+    kept: list[str] = []
+    earlier = ""
+    for part in parts:
+        part_words = {w for w in re.findall(r"[a-z0-9]+", part.lower()) if len(w) > 3}
+        earlier_words = {w for w in re.findall(r"[a-z0-9]+", earlier.lower()) if len(w) > 3}
+        if (
+            len(part_words) >= 3
+            and earlier_words
+            and len(part_words & earlier_words) / len(part_words) >= 0.55
+        ):
+            continue
+        kept.append(part)
+        earlier = f"{earlier}, {part}"
+    return ", ".join(kept)
+
+
 def _contextual_pad(original: str, current: str, max_chars: int, target: int) -> str:
-    """Add safe detail drawn from the original bullet's themes when still short."""
-    result = current.rstrip(".")
+    """Add at most one short clause from the original bullet's themes when still short."""
+    result = _dedupe_clauses(current.rstrip("."))
+    # Never pad lines that are already close — PDF wraps before the char model maxes out
+    if len(result) >= int(max_chars * 0.88):
+        return result
     if len(result) >= target:
         return result
 
@@ -438,14 +462,28 @@ def _contextual_pad(original: str, current: str, max_chars: int, target: int) ->
             " to improve user engagement and adoption",
             " delivering measurable impact for end users",
         ])
+    if any(k in o for k in ("robot", "first", "ftc", "frc", "programming", "software")):
+        suffixes.extend([
+            ", mentoring junior programmers",
+            " across FTC competition seasons",
+        ])
+    if any(k in o for k in ("led", "lead", "head", "captain", "chair", "outreach")):
+        suffixes.extend([
+            ", mentoring students and new team leads",
+            ", building team capacity",
+        ])
 
+    best = result
     for suffix in suffixes:
-        if suffix.strip().lower() in result.lower():
+        frag = suffix.strip().lstrip(",").strip().lower()
+        if frag and frag in best.lower():
             continue
-        trial = f"{result}{suffix}"
-        if len(trial) <= max_chars and len(trial) >= target:
-            return trial.strip()
-    return result
+        trial = _dedupe_clauses(f"{best}{suffix}".strip())
+        if len(trial) <= max_chars and len(trial) > len(best):
+            best = trial
+            if len(best) >= target:
+                return best
+    return best
 
 
 def fill_bullet_line(original: str, current: str, max_chars: int) -> str:
@@ -557,10 +595,12 @@ def bullet_fill_ratio(text: str, max_chars: int) -> float:
 def bullet_line_status(text: str, max_chars: int) -> str:
     """Human label: ok | short | long | weak."""
     t = _normalize(text)
-    target = int(max_chars * 0.96)
+    target = int(max_chars * 0.90)
     if len(t) > max_chars:
         return "long"
-    if len(t) < int(max_chars * 0.92):
+    if len(t) > int(max_chars * 0.97):
+        return "long"
+    if len(t) < int(max_chars * 0.88):
         return "short"
     if _weak_opener_local(t):
         return "weak"
@@ -594,10 +634,10 @@ def bullet_needs_work(text: str, max_chars: int) -> bool:
     t = _normalize(text)
     if not t:
         return True
-    target = int(max_chars * 0.96)
+    target = int(max_chars * 0.90)
     if len(t) < target:
         return True
-    if len(t) > max_chars:
+    if len(t) > int(max_chars * 0.97):
         return True
     if _weak_opener_local(t):
         return True
