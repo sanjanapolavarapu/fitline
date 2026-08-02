@@ -18,7 +18,6 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
-from fitline_auth import authenticate, create_account, count_users, is_admin, load_user_work, save_user_work
 from bullet_strong import bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
@@ -31,9 +30,6 @@ from sections import (
     resolve_selection,
 )
 from chat_intent import help_message, parse_chat_intent, resolve_bullet_indices, active_section
-
-# Set True later to require sign-up / log-in before the editor.
-AUTH_REQUIRED = True
 
 EDITOR_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -391,59 +387,6 @@ def compile_and_store(tex: str, *, which: str) -> str | None:
     return notice if pdf and notice else None
 
 
-def _current_user_email() -> str | None:
-    if not AUTH_REQUIRED or not st.session_state.get("authenticated"):
-        return None
-    user = st.session_state.get("user") or {}
-    return user.get("email")
-
-
-def persist_user_work() -> None:
-    """Save resume + chat to the logged-in account."""
-    email = _current_user_email()
-    if not email or not st.session_state.get("source_tex"):
-        return
-    save_user_work(
-        email,
-        {
-            "source_tex": st.session_state.source_tex,
-            "working_tex": st.session_state.working_tex,
-            "fixed_tex": st.session_state.fixed_tex,
-            "source_label": st.session_state.source_label,
-            "paste_buffer": st.session_state.paste_buffer,
-            "messages": st.session_state.messages[-20:],
-            "selected_section": st.session_state.selected_section,
-        },
-    )
-
-
-def restore_user_work(user: dict) -> None:
-    """Load saved resume + chat after login."""
-    email = user.get("email")
-    if not email:
-        return
-    saved = load_user_work(email)
-    if not saved or not saved.get("source_tex"):
-        return
-    tex = _sanitize_stored_tex(saved["source_tex"])
-    st.session_state.paste_buffer = saved.get("paste_buffer") or tex
-    st.session_state.source_tex = tex
-    st.session_state.working_tex = saved.get("working_tex") or tex
-    st.session_state.fixed_tex = saved.get("fixed_tex")
-    st.session_state.source_label = saved.get("source_label") or "saved resume"
-    st.session_state.messages = saved.get("messages") or []
-    if saved.get("selected_section"):
-        st.session_state.selected_section = saved["selected_section"]
-    st.session_state.experiences = parse_experiences(tex)
-    if not st.session_state.experiences:
-        st.session_state.experiences = list_itemize_blocks(tex)
-    st.session_state.line_chars = effective_line_chars(tex)
-    with st.spinner("Restoring your saved resume…"):
-        compile_and_store(tex, which="source")
-        if st.session_state.fixed_tex:
-            compile_and_store(st.session_state.fixed_tex, which="fixed")
-
-
 def load_resume(tex: str, label: str = "pasted resume") -> None:
     tex = flatten_resume_bullets(_sanitize_stored_tex(tex))
     st.session_state.source_tex = tex
@@ -459,7 +402,6 @@ def load_resume(tex: str, label: str = "pasted resume") -> None:
     st.session_state.line_chars = effective_line_chars(tex)
     with st.spinner("Compiling PDF preview…"):
         compile_and_store(tex, which="source")
-    persist_user_work()
 
 
 def active_api_key(provider: str) -> str | None:
@@ -572,8 +514,6 @@ def apply_fix(
 
     with st.spinner("Updating PDF preview…"):
         compile_and_store(result, which="fixed")
-
-    persist_user_work()
 
     section = stats.get("section", "resume")
     mode = stats.get("mode", "rules")
@@ -726,9 +666,6 @@ def init_state() -> None:
         "converted_pdf_name": None,
         "converted_pdf_error": None,
         "in_app": False,
-        "authenticated": False,
-        "user": None,
-        "auth_view": "login",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -845,86 +782,8 @@ def render_api_key_sidebar(provider: str, use_ai: bool) -> None:
             st.warning("OpenAI requires a paid API key.")
 
 
-def render_auth() -> None:
-    """Sign up / log in before entering the editor."""
-    st.markdown(EDITOR_CSS, unsafe_allow_html=True)
-    st.markdown(
-        f"""
-<div class="fl-app-header" style="text-align:center; margin:0.5rem 0 1.25rem;">
-  <span style="font-size:1.75rem; font-weight:800; color:#0f172a; letter-spacing:-0.03em;">{APP_NAME}</span>
-  <p style="font-size:0.95rem; color:#64748b; margin:0.55rem 0 0; line-height:1.55;">
-    Free account — your resume is saved so you can pick up where you left off.
-  </p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-    st.info(
-        "**Privacy:** We store your email, a hashed password, and your saved resume on this server. "
-        "We don't sell data. Gemini API keys stay in your browser only — never saved."
-    )
-
-    col_l, col_m, col_r = st.columns([1, 1.15, 1])
-    with col_m:
-        tab_login, tab_signup = st.tabs(["Log in", "Create account"])
-
-        with tab_login:
-            email = st.text_input("Email", key="login_email", placeholder="you@email.com")
-            password = st.text_input("Password", type="password", key="login_password")
-            if st.button("Log in", type="primary", use_container_width=True):
-                ok, msg, user = authenticate(email, password)
-                if ok and user:
-                    st.session_state.authenticated = True
-                    st.session_state.user = user
-                    st.session_state.in_app = True
-                    restore_user_work(user)
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-        with tab_signup:
-            name = st.text_input("Name", key="signup_name", placeholder="Your name")
-            email = st.text_input("Email", key="signup_email", placeholder="you@email.com")
-            password = st.text_input("Password", type="password", key="signup_password")
-            confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
-            st.caption("Password must be at least 8 characters.")
-            if st.button("Create account", type="primary", use_container_width=True):
-                if password != confirm:
-                    st.error("Passwords don't match.")
-                else:
-                    ok, msg = create_account(email, password, name)
-                    if ok:
-                        _, _, user = authenticate(email, password)
-                        st.session_state.authenticated = True
-                        st.session_state.user = user
-                        st.session_state.in_app = True
-                        restore_user_work(user)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-        st.divider()
-        if st.button("← Back to home", use_container_width=True):
-            st.session_state.in_app = False
-            st.rerun()
-
-
 def render_sidebar_controls() -> tuple[str, bool, bool]:
-    """Sidebar: account, API key, settings, fix controls. Returns (provider, use_ai, strong)."""
-    if AUTH_REQUIRED:
-        user = st.session_state.get("user") or {}
-        st.caption(f"Signed in as **{user.get('name', 'User')}**")
-        if st.session_state.get("source_tex"):
-            st.caption(f"Resume: **{st.session_state.source_label or 'loaded'}**")
-        if is_admin(user.get("email", "")):
-            st.caption(f"📊 **{count_users()}** registered users")
-        if st.button("Log out", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.user = None
-            st.session_state.in_app = False
-            st.rerun()
-        st.divider()
-
+    """Sidebar: API key, settings, fix controls. Returns (provider, use_ai, strong)."""
     provider = st.radio(
         "AI provider",
         options=["gemini", "openai"],
@@ -1376,9 +1235,6 @@ if __name__ == "__main__":
     st.set_page_config(page_title=APP_NAME, page_icon="📄", layout="wide")
     init_state()
     if st.session_state.in_app:
-        if AUTH_REQUIRED and not st.session_state.authenticated:
-            render_auth()
-        else:
-            render_app()
+        render_app()
     else:
         render_landing()

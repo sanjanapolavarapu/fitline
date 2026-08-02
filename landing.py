@@ -83,7 +83,7 @@ FEATURES = [
 ]
 
 STEPS = [
-    ("1", "Create a free account", "Sign up with email — your resume saves automatically."),
+    ("1", "Open the editor", "Click Get started — no sign-up required."),
     ("2", "Load your resume", "Paste LaTeX or upload a PDF — we detect your jobs automatically."),
     ("3", "Pick one role", "Choose an experience in the sidebar. Fix all bullets or just one."),
     ("4", "Review & export", "Preview the PDF, chat tweaks, then download updated .tex for Overleaf."),
@@ -310,14 +310,14 @@ def _setup_html() -> str:
   margin-bottom: 2rem;
 ">
   <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:1rem;">
-    <span style="font-size:1.5rem;">👤</span>
+    <span style="font-size:1.5rem;">🔒</span>
     <div style="font-size:1.1rem; font-weight:800; color:#312e81; letter-spacing:-0.02em;">
-      Free account — pick up where you left off
+      Private by default
     </div>
   </div>
   <p style="font-size:0.88rem; line-height:1.65; color:#4338ca; margin:0 0 1.15rem;">
-    Create an account and your resume saves automatically when you log back in.
-    We store your email, hashed password, and resume text — not your Gemini key.
+    No account required. Your resume stays in this browser session only — nothing is saved on our server.
+    Paste your free Gemini key in the sidebar for AI; we never store that either.
   </p>
 
   <div style="background:#fff; border:1px solid #c7d2fe; border-radius:14px; padding:1.2rem 1.3rem;">
@@ -325,7 +325,7 @@ def _setup_html() -> str:
       Quick start
     </div>
     <ol style="margin:0; padding-left:1.2rem; font-size:0.88rem; line-height:1.75; color:#334155;">
-      <li>Click <strong>Get started</strong> → create account or log in</li>
+      <li>Click <strong>Get started</strong> → open the editor</li>
       <li>Paste your free <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4f46e5; font-weight:600;">Gemini key</a> in the sidebar (for AI)</li>
       <li>Load your resume → <strong>Fix selected section</strong></li>
     </ol>
@@ -373,7 +373,7 @@ def render_landing() -> None:
 
     c1, c2, c3 = st.columns([1, 1.4, 1])
     with c2:
-        if st.button("Sign up / Log in", type="primary", use_container_width=True):
+        if st.button("Open editor →", type="primary", use_container_width=True):
             _enter_app()
 
     st.markdown(
