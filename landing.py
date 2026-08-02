@@ -9,7 +9,20 @@ from brand import APP_DESCRIPTION, APP_NAME, APP_TAGLINE
 LANDING_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+  #MainMenu, footer, header[data-testid="stHeader"],
+  div[data-testid="stToolbar"],
+  div[data-testid="stToolbarActions"],
+  div[data-testid="stDecoration"],
+  [data-testid="stToolbarActionButton"],
+  [data-testid="stToolbarActionButtonIcon"],
+  .viewerBadge_container__1QSob,
+  .styles_viewerBadge__1yB5_ {
+    visibility: hidden !important;
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
   .stApp {
     background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 35%, #ffffff 100%) !important;
   }

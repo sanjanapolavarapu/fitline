@@ -13,4 +13,4 @@ headless = true
 enableCORS = false
 
 [client]
-toolbarMode = "minimal"
+toolbarMode = "viewer"

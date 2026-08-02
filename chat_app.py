@@ -34,8 +34,16 @@ from chat_intent import help_message, parse_chat_intent, resolve_bullet_indices,
 EDITOR_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  #MainMenu, footer, header[data-testid="stHeader"] {
+  #MainMenu, footer, header[data-testid="stHeader"],
+  div[data-testid="stToolbar"],
+  div[data-testid="stToolbarActions"],
+  div[data-testid="stDecoration"],
+  [data-testid="stToolbarActionButton"],
+  [data-testid="stToolbarActionButtonIcon"],
+  .viewerBadge_container__1QSob,
+  .styles_viewerBadge__1yB5_ {
     visibility: hidden !important;
+    display: none !important;
     height: 0 !important;
     min-height: 0 !important;
     overflow: hidden !important;
@@ -46,7 +54,7 @@ EDITOR_CSS = """
   }
   section.main > div.block-container,
   .block-container {
-    padding-top: 3.25rem !important;
+    padding-top: 1.5rem !important;
     padding-left: 2.5rem !important;
     padding-right: 2.5rem !important;
     padding-bottom: 2rem !important;
