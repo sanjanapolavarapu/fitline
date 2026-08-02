@@ -463,7 +463,8 @@ def apply_fix(
     if not base:
         return "Paste your LaTeX above and click **Load resume** first."
 
-    line_chars = st.session_state.get("line_chars") or line_chars_for(base)
+    line_chars = line_chars_for(base)
+    st.session_state.line_chars = line_chars
 
     company_arg = None if not company or company == "All sections" else company
     block = resolve_selection(base, company_arg) if company_arg else None
@@ -473,22 +474,25 @@ def apply_fix(
     resolved_key = active_api_key(provider) if api_key is None else resolve_api_key(provider, api_key)  # type: ignore[arg-type]
     resolved_key = resolved_key or None
 
+    use_ai_for_fix = use_ai and bool(resolved_key)
     if use_ai and not resolved_key:
-        return (
-            "⚠️ **No API key detected.** Paste your Gemini key in the sidebar first, "
-            "then click **Fix selected section** again. Also pick a **specific experience** "
-            "(not “All sections”) for AI rewrite."
+        rules_fallback_note = (
+            "No Gemini key in sidebar — used **rule-based** line fill. "
+            "Paste a free key for smarter rewrites."
         )
-    if use_ai and not company_arg:
+    else:
+        rules_fallback_note = ""
+
+    if use_ai_for_fix and not company_arg:
         return (
-            "⚠️ Pick a **specific experience** in the sidebar (not “All sections”) — "
-            "AI rewrite runs one job at a time."
+            "⚠️ Pick a **specific section** in the sidebar (not “All sections”) — "
+            "AI rewrite runs one section at a time."
         )
 
     if bullet_indices is not None and not bullet_indices:
         return "⚠️ Pick at least **one bullet** to fix in the sidebar."
 
-    spinner_msg = "Rewriting bullets with AI…" if use_ai and resolved_key else "Tightening bullets…"
+    spinner_msg = "Rewriting bullets with AI…" if use_ai_for_fix else "Tightening bullets…"
 
     with st.spinner(spinner_msg):
         importlib.reload(ai_rewriter)
@@ -499,7 +503,7 @@ def apply_fix(
             max_chars=line_chars,
             company=company_arg,
             api_key=resolved_key,
-            use_ai=use_ai,
+            use_ai=use_ai_for_fix,
             provider=provider,
             feedback=feedback,
             bullet_indices=bullet_indices,
@@ -530,6 +534,9 @@ def apply_fix(
         "**rule-based** (kept your numbers)" if mode == "rules" and ai_note else "**rule-based** trim"
     )
     parts: list[str] = []
+
+    if rules_fallback_note:
+        parts.append(f"ℹ️ {rules_fallback_note}\n\n")
 
     if ai_note and mode != "ai":
         low = ai_note.lower()
@@ -734,7 +741,7 @@ def render_pdf_panel(*, height: int = 780) -> None:
             with st.expander("View fixed LaTeX"):
                 st.code(st.session_state.fixed_tex, language="latex")
         else:
-            st.info("Pick a job in the sidebar and click **Fix selected section**.")
+            st.info("Pick a section in the sidebar and click **Fix selected section**.")
 
 
 def render_api_key_sidebar(provider: str, use_ai: bool) -> None:
@@ -824,13 +831,13 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
 
     exp_labels = [e.label for e in st.session_state.experiences]
     if not exp_labels and st.session_state.source_tex:
-        exp_labels = [e.label for e in list_itemize_blocks(st.session_state.source_tex)]
-        st.session_state.experiences = list_itemize_blocks(st.session_state.source_tex)
+        exp_labels = [e.label for e in parse_experiences(st.session_state.source_tex) or list_itemize_blocks(st.session_state.source_tex)]
+        st.session_state.experiences = parse_experiences(st.session_state.source_tex) or list_itemize_blocks(st.session_state.source_tex)
 
     diag = diagnose_tex(st.session_state.source_tex or "")
 
     if not exp_labels and st.session_state.source_tex:
-        st.error("No jobs detected in your paste.")
+        st.error("No sections detected in your paste.")
         if diag["company_hints"]:
             st.caption("Companies found near bullets: " + ", ".join(diag["company_hints"][:6]))
         manual = st.text_input(
@@ -854,7 +861,7 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
         st.session_state.selected_section = exp_labels[0]
 
     selected = st.selectbox(
-        "Experience / project",
+        "Section / role",
         options=exp_labels,
         index=exp_labels.index(st.session_state.selected_section)
         if st.session_state.selected_section in exp_labels
@@ -865,7 +872,9 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
     section_bullets = bullets_for_section(selected)
     picked_bullet_indices: set[int] | None = None
     if section_bullets:
-        render_bullet_line_analysis(section_bullets, st.session_state.get("line_chars") or 98)
+        line_chars = line_chars_for(st.session_state.working_tex or st.session_state.source_tex)
+        st.session_state.line_chars = line_chars
+        render_bullet_line_analysis(section_bullets, line_chars)
         st.caption("Which bullets should we fix?")
         bullet_options = list(range(len(section_bullets)))
         picked = st.multiselect(
@@ -926,7 +935,7 @@ def render_sidebar_controls() -> tuple[str, bool, bool]:
 
     if st.session_state.source_tex:
         st.caption(f"Loaded: {st.session_state.source_label}")
-        st.caption(f"{len(st.session_state.experiences)} experiences found")
+        st.caption(f"{len(st.session_state.experiences)} sections found")
 
     return provider, use_ai, strong
 
@@ -943,7 +952,7 @@ def render_resume_section() -> None:
     with st.expander(label, expanded=not loaded):
         if loaded:
             st.caption(
-                f"**{len(st.session_state.experiences)}** jobs detected · "
+                f"**{len(st.session_state.experiences)}** sections detected · "
                 "Edit below and click **Reload** to refresh the preview."
             )
         else:
@@ -1003,7 +1012,7 @@ def render_resume_section() -> None:
                 st.session_state.paste_buffer = content
                 load_resume(content, uploaded.name)
                 st.session_state.messages = [
-                    {"role": "assistant", "content": f"Loaded `{uploaded.name}`. Pick an experience in the sidebar."}
+                    {"role": "assistant", "content": f"Loaded `{uploaded.name}`. Pick a section in the sidebar."}
                 ]
                 st.rerun()
 
@@ -1037,7 +1046,7 @@ def render_resume_section() -> None:
                     if short_n:
                         msg += (
                             f"\n\n⚠️ **{short_n} bullet(s) look too short.** "
-                            "Pick a job in the sidebar and click **Fix selected section**."
+                            "Pick a section in the sidebar and click **Fix selected section**."
                         )
                     st.session_state.messages = [{"role": "assistant", "content": msg}]
             st.rerun()
@@ -1134,7 +1143,7 @@ def render_chat_column(strong: bool, use_ai: bool, provider: str) -> None:
             st.session_state.paste_buffer = prompt
             load_resume(prompt)
             reply = (
-                f"Loaded! **{len(st.session_state.experiences)}** experiences found. Pick one in the sidebar."
+                f"Loaded! **{len(st.session_state.experiences)}** sections found. Pick one in the sidebar."
                 if st.session_state.experiences
                 else "Loaded! Pick a company in the sidebar after adding your Gemini key."
             )
@@ -1200,7 +1209,7 @@ def render_app() -> None:
     if not st.session_state.source_tex:
         st.info(
             "**Get started:** Paste your LaTeX below and click **Load resume**. "
-            "Pick a job in the sidebar and click **Fix selected section** — preview updates live on the right."
+            "Pick a section in the sidebar and click **Fix selected section** — preview updates live on the right."
         )
         if st.session_state.use_ai and not active_api_key(st.session_state.ai_provider):
             st.warning(

@@ -135,6 +135,9 @@ def _char_width_in(tex: str, pt: float) -> float:
         char_w_in *= 0.92
     elif "helvet" in tex.lower() or "sans" in tex.lower():
         char_w_in *= 1.08
+    if re.search(r"\\usepackage.*\{lmodern\}", tex, re.I):
+        # Latin Modern renders narrower than our default cm estimate in pdflatex preview
+        char_w_in *= 0.94
     if re.search(r"\\resumeItem.*\\small|\\item\\small|\\small\{", tex, re.I) or re.search(
         r"\\newcommand\{\\resumeItem\}", tex, re.I
     ):
@@ -155,7 +158,7 @@ def estimate_line_chars(tex: str) -> int:
 
     bullet_w = max(text_w - indent_in, text_w * 0.92)
     chars = int(bullet_w / char_w_in)
-    return max(80, min(118, chars))
+    return max(80, min(115, chars))
 
 
 def _is_complete_document(tex: str) -> bool:
@@ -175,8 +178,10 @@ def effective_line_chars(tex: str) -> int:
             rf"\item x"
             rf"\end{{itemize}}"
         )
-        return estimate_line_chars(preview_tex)
-    return estimate_line_chars(tex)
+        n = estimate_line_chars(preview_tex)
+    else:
+        n = estimate_line_chars(tex)
+    return max(80, min(105, n))
 
 
 def line_width_hint(tex: str) -> str:
