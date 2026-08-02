@@ -265,7 +265,40 @@ def _panel_banner(title: str, subtitle: str = "", accent: str = "#6366f1") -> No
 
 
 def show_pdf(pdf_bytes: bytes, height: int = 720) -> None:
-    """Embed PDF — works on Streamlit versions without st.pdf."""
+    """Render PDF preview — PNG pages work on Streamlit Cloud (Chrome blocks base64 iframes)."""
+    if not pdf_bytes or not pdf_bytes.startswith(b"%PDF"):
+        st.warning("Preview unavailable — PDF could not be generated.")
+        return
+
+    try:
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if doc.page_count == 0:
+            doc.close()
+            st.warning("Preview unavailable — empty PDF.")
+            return
+
+        scale = 150 / 72  # ~150 DPI — sharp enough for a one-page resume
+        matrix = fitz.Matrix(scale, scale)
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            st.image(pix.tobytes("png"), use_container_width=True)
+            if page_num < doc.page_count - 1:
+                st.markdown('<div style="height:0.75rem"></div>', unsafe_allow_html=True)
+        doc.close()
+        return
+    except Exception:
+        pass
+
+    if hasattr(st, "pdf"):
+        try:
+            st.pdf(pdf_bytes, height=height)
+            return
+        except Exception:
+            pass
+
     b64 = base64.b64encode(pdf_bytes).decode()
     st.markdown(
         f'<div class="fl-pdf-wrap"><iframe src="data:application/pdf;base64,{b64}" '
@@ -371,6 +404,9 @@ def _compile_tex_to_pdf(tex: str) -> tuple[bytes | None, str | None, str | None,
 
 def compile_and_store(tex: str, *, which: str) -> str | None:
     pdf, err, repaired, notice = _compile_tex_to_pdf(tex)
+    if pdf and not pdf.startswith(b"%PDF"):
+        err = err or "PDF compile produced invalid output"
+        pdf = None
     if repaired and pdf:
         if which == "source":
             st.session_state.source_tex = repaired
