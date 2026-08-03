@@ -9,6 +9,11 @@ import re
 
 DEFAULT_MAX_CHARS = 98
 
+# Edge-to-edge thresholds (char count vs detected line width)
+FILL_MIN_RATIO = 0.94  # below this → "too short" / needs rewrite
+FILL_GOAL_RATIO = 0.96  # target when expanding toward the right margin
+HARD_MAX_RATIO = 0.97  # above this → trim (avoid PDF wrap)
+
 FILLER_PHRASES: list[re.Pattern[str]] = [
     re.compile(r"\bexceptional and personalized\b", re.I),
     re.compile(r"\bin order to\b", re.I),
@@ -77,7 +82,7 @@ STRONG_VERB_RE = re.compile(
     r"Optimized|Improved|Launched|Scaled|Automated|Architected|Engineered|"
     r"Partnered|Devised|Ensured|Created|Implemented|Drove|Grew|Achieved|"
     r"Advised|Deliver|Develop|Manage|Lead|Build|Drive|Grow|Partner|Devise|Ensure|"
-    r"Instructed|Co-developed|"
+    r"Instructed|Co-developed|Studied|Presented|"
     r"Work|Serve)\b",
     re.I,
 )
@@ -436,19 +441,32 @@ def _dedupe_clauses(text: str) -> str:
 def _contextual_pad(original: str, current: str, max_chars: int, target: int) -> str:
     """Add at most one short clause from the original bullet's themes when still short."""
     result = _dedupe_clauses(current.rstrip("."))
-    # Never pad lines that are already close — PDF wraps before the char model maxes out
-    if len(result) >= int(max_chars * 0.88):
-        return result
     if len(result) >= target:
         return result
 
     o = original.lower()
     suffixes: list[str] = []
-    if any(k in o for k in ("study", "student", "learn", "tutor", "class")):
+    if any(k in o for k in ("study", "student", "learn", "tutor", "class", "research", "present")):
         suffixes.extend([
             " tailored to student study needs",
             " tailored to their study needs",
             " for collaborative student learning",
+            " models and research findings",
+        ])
+    if any(
+        k in o
+        for k in (
+            "artificial intelligence",
+            "machine learning",
+            "natural language",
+            "nlp",
+            "deep learning",
+        )
+    ):
+        suffixes.extend([
+            ", Machine Learning, and Natural Language Processing models",
+            " models across AI and NLP research areas",
+            " covering core ML and NLP model families",
         ])
     if any(k in o for k in ("math", "instruct", "teach", "tutor")):
         suffixes.extend([
@@ -489,7 +507,7 @@ def _contextual_pad(original: str, current: str, max_chars: int, target: int) ->
 def fill_bullet_line(original: str, current: str, max_chars: int) -> str:
     """Ensure a bullet reaches ~96% of max_chars (including spaces)."""
     s = _normalize(current)
-    target = int(max_chars * 0.96)
+    target = int(max_chars * FILL_GOAL_RATIO)
     if len(s) >= target:
         return s
     if _is_prefix_truncation(original, s):
@@ -517,8 +535,8 @@ def fit_bullet_to_line(original: str, max_chars: int) -> str:
     orig = _normalize(original)
     if not orig:
         return orig
-    target = int(max_chars * 0.96)
-    min_ok = int(max_chars * 0.92)
+    target = int(max_chars * FILL_GOAL_RATIO)
+    min_ok = int(max_chars * FILL_MIN_RATIO)
 
     candidates: list[str] = []
 
@@ -595,17 +613,15 @@ def bullet_fill_ratio(text: str, max_chars: int) -> float:
 def bullet_line_status(text: str, max_chars: int) -> str:
     """Human label: ok | short | long | weak."""
     t = _normalize(text)
-    target = int(max_chars * 0.90)
+    target = int(max_chars * FILL_MIN_RATIO)
     if len(t) > max_chars:
         return "long"
-    if len(t) > int(max_chars * 0.97):
+    if len(t) > int(max_chars * HARD_MAX_RATIO):
         return "long"
-    if len(t) < int(max_chars * 0.88):
+    if len(t) < target:
         return "short"
     if _weak_opener_local(t):
         return "weak"
-    if len(t) < target:
-        return "short"
     return "ok"
 
 
@@ -634,10 +650,10 @@ def bullet_needs_work(text: str, max_chars: int) -> bool:
     t = _normalize(text)
     if not t:
         return True
-    target = int(max_chars * 0.90)
+    target = int(max_chars * FILL_MIN_RATIO)
     if len(t) < target:
         return True
-    if len(t) > int(max_chars * 0.97):
+    if len(t) > int(max_chars * HARD_MAX_RATIO):
         return True
     if _weak_opener_local(t):
         return True
@@ -669,7 +685,7 @@ def _fix_gerund_lead(text: str, original: str) -> str:
 
 def tighten_bullet(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     original = _normalize(text)
-    target = int(max_chars * 0.96)
+    target = int(max_chars * FILL_GOAL_RATIO)
 
     # Already fits one line — strengthen openers and expand to char target, don't shorten
     if len(original) <= max_chars:

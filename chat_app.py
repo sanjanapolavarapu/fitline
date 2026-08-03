@@ -18,7 +18,7 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
-from bullet_strong import bullet_status_display, render_bullet_status_legend
+from bullet_strong import bullet_needs_work, bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
 from ai_rewriter import effective_gemini_key, resolve_api_key, test_gemini_key
@@ -469,6 +469,9 @@ def render_bullet_line_analysis(bullets: list[str], line_chars: int) -> None:
     if not bullets or not line_chars:
         return
     st.caption(render_bullet_status_legend())
+    short_n = sum(1 for b in bullets if bullet_needs_work(b, line_chars))
+    if short_n:
+        st.caption(f"**{short_n} of {len(bullets)}** bullet(s) need line fill in this section.")
     for i, text in enumerate(bullets):
         icon, label = bullet_status_display(text, line_chars)
         st.caption(f"{icon} **{i + 1}.** {label}")
@@ -543,6 +546,7 @@ def apply_fix(
             provider=provider,
             feedback=feedback,
             bullet_indices=bullet_indices,
+            reference_tex=st.session_state.source_tex,
         )
 
     if stats.get("error"):
