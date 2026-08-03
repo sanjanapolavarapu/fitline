@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .fitline_users.json
+feedback/submissions.jsonl
 __pycache__/
 *.pyc
 *.pyo

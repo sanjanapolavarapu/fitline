@@ -104,7 +104,12 @@ STEPS = [
 
 
 def _enter_app() -> None:
-    st.session_state.in_app = True
+    st.session_state.page = "editor"
+    st.rerun()
+
+
+def _open_feedback() -> None:
+    st.session_state.page = "feedback"
     st.rerun()
 
 
@@ -389,8 +394,13 @@ def render_landing() -> None:
         if st.button("Open editor →", type="primary", use_container_width=True):
             _enter_app()
 
+    c1, c2, c3 = st.columns([1, 1.4, 1])
+    with c2:
+        if st.button("Send feedback 💬", use_container_width=True):
+            _open_feedback()
+
     st.markdown(
-        f'<p class="fl-font" style="text-align:center; font-size:0.75rem; color:#94a3b8; margin-top:1.75rem;">'
+        f'<p class="fl-font" style="text-align:center; font-size:0.75rem; color:#94a3b8; margin-top:1rem;">'
         f"{APP_NAME} · LaTeX resume bullets · PDF import · ATS formatting</p>",
         unsafe_allow_html=True,
     )
