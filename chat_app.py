@@ -18,6 +18,7 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
+from feedback import render_feedback
 from bullet_strong import bullet_line_status, bullet_needs_work, bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
@@ -758,11 +759,14 @@ def init_state() -> None:
         "converted_pdf_latex": None,
         "converted_pdf_name": None,
         "converted_pdf_error": None,
-        "in_app": False,
+        "page": "landing",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    if st.session_state.get("in_app") and st.session_state.page == "landing":
+        st.session_state.page = "editor"
 
     load_env_file()
 
@@ -1303,7 +1307,10 @@ def render_app() -> None:
             unsafe_allow_html=True,
         )
         if st.button("← Home", use_container_width=True):
-            st.session_state.in_app = False
+            st.session_state.page = "landing"
+            st.rerun()
+        if st.button("Feedback 💬", use_container_width=True):
+            st.session_state.page = "feedback"
             st.rerun()
         st.divider()
         provider, use_ai, strong = render_sidebar_controls()
@@ -1329,7 +1336,10 @@ def render_app() -> None:
 if __name__ == "__main__":
     st.set_page_config(page_title=APP_NAME, page_icon="📄", layout="wide")
     init_state()
-    if st.session_state.in_app:
+    page = st.session_state.get("page", "landing")
+    if page == "editor":
         render_app()
+    elif page == "feedback":
+        render_feedback()
     else:
         render_landing()
