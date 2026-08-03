@@ -143,23 +143,26 @@ def list_section_bullet_texts(section: str) -> list[str]:
     return [_clean_bullet(body) for _line, _indent, body in _extract_bullets(section)]
 
 
-def _rewrite_bullet_body(original: str, max_chars: int) -> str:
+def _rewrite_bullet_body(original: str, max_chars: int, *, reference: str | None = None) -> str:
     """Rule-based pass: read original text and fit to one full line by char count."""
-    from bullet_strong import _contextual_pad, _append_original_words, _expand_toward_limit
+    from bullet_strong import FILL_GOAL_RATIO, _contextual_pad, _append_original_words, _expand_toward_limit
 
     cleaned = _clean_bullet(original)
-    target = int(max_chars * 0.96)
+    ref = _clean_bullet(reference or original)
+    goal = int(max_chars * FILL_GOAL_RATIO)
     body = tighten_bullet(cleaned, max_chars)
-    if len(body) < target:
-        body = fill_bullet_line(cleaned, body, max_chars)
-        body = _expand_toward_limit(cleaned, body, max_chars)
-        body = _append_original_words(cleaned, body, max_chars, target)
-        if len(body) < target:
-            body = _contextual_pad(cleaned, body, max_chars, target)
-    body = _finalize_bullet(cleaned, body, max_chars)
-    if bullet_needs_work(body, max_chars) or _is_prefix_truncation(cleaned, body):
-        body = fit_bullet_to_line(cleaned, max_chars)
-        body = _finalize_bullet(cleaned, body, max_chars)
+    if len(body) < goal:
+        body = fill_bullet_line(ref, body, max_chars)
+        body = _expand_toward_limit(ref, body, max_chars)
+        body = _append_original_words(ref, body, max_chars, goal)
+        if len(body) < goal:
+            body = _contextual_pad(ref, body, max_chars, goal)
+    body = _finalize_bullet(ref, body, max_chars)
+    if bullet_needs_work(body, max_chars) or _is_prefix_truncation(ref, body):
+        body = fit_bullet_to_line(ref, max_chars)
+        body = _finalize_bullet(ref, body, max_chars)
+    if bullet_needs_work(body, max_chars):
+        body = _enforce_edge_to_edge(ref, body, max_chars)
     return body
 
 
@@ -214,6 +217,9 @@ def _apply_bullets_to_section(
             ):
                 before = originals[bullet_idx] if originals and bullet_idx < len(originals) else body
                 changes.append((_clean_bullet(before), new_body))
+            elif should_fix and len(_clean_bullet(new_body)) > len(orig_clean):
+                before = originals[bullet_idx] if originals and bullet_idx < len(originals) else body
+                changes.append((_clean_bullet(before), new_body))
             out.append(f"{indent}\\resumeItem{{{_escape_latex_arg(new_body)}}}")
             bullet_idx += 1
             last = end
@@ -242,6 +248,9 @@ def _apply_bullets_to_section(
         ):
             before = originals[bullet_idx] if originals and bullet_idx < len(originals) else body
             changes.append((_clean_bullet(before), new_body))
+        elif should_fix and len(_clean_bullet(new_body)) > len(orig_clean):
+            before = originals[bullet_idx] if originals and bullet_idx < len(originals) else body
+            changes.append((_clean_bullet(before), new_body))
         bullet_idx += 1
         if kind == "resumeItem":
             lines.append(
@@ -253,11 +262,47 @@ def _apply_bullets_to_section(
     return "".join(lines), changes
 
 
+def _reference_bodies_for_block(reference_tex: str | None, block: ExperienceBlock) -> list[str] | None:
+    """Original bullet text from an earlier snapshot (usually source_tex) for expansion."""
+    if not reference_tex:
+        return None
+    ref_block = resolve_selection(reference_tex, block.label) or find_experience(reference_tex, block.company)
+    if not ref_block:
+        return None
+    return [_clean_bullet(body) for _line, _indent, body in _extract_bullets(reference_tex[ref_block.start : ref_block.end])]
+
+
+def _ensure_bodies_filled(
+    originals: list[str],
+    bodies: list[str],
+    max_chars: int,
+    *,
+    reference_bodies: list[str] | None = None,
+    bullet_indices: set[int] | None = None,
+) -> list[str]:
+    """Last pass: expand any bullet that still does not reach the line target."""
+    out = list(bodies)
+    for i, raw in enumerate(originals):
+        if bullet_indices is not None and i not in bullet_indices:
+            continue
+        if i >= len(out):
+            break
+        ref = reference_bodies[i] if reference_bodies and i < len(reference_bodies) else _clean_bullet(raw)
+        current = _clean_bullet(out[i])
+        if not bullet_needs_work(current, max_chars) and not bullet_needs_work(ref, max_chars):
+            continue
+        improved = _rewrite_bullet_body(raw, max_chars, reference=ref)
+        if len(_clean_bullet(improved)) > len(current) or bullet_needs_work(current, max_chars):
+            out[i] = improved
+    return out
+
+
 def transform_items_rules(
     tex: str,
     strong: bool,
     max_chars: int,
     bullet_indices: set[int] | None = None,
+    reference_bodies: list[str] | None = None,
 ) -> tuple[str, int, list[tuple[str, str]]]:
     tex = flatten_resume_bullets(tex)
     bullets = _extract_bullets(tex)
@@ -269,10 +314,19 @@ def transform_items_rules(
     new_bodies: list[str] = []
 
     for i, raw in enumerate(originals):
+        ref = reference_bodies[i] if reference_bodies and i < len(reference_bodies) else _clean_bullet(raw)
         if strong and (bullet_indices is None or i in bullet_indices):
-            new_bodies.append(_rewrite_bullet_body(raw, max_chars))
+            new_bodies.append(_rewrite_bullet_body(raw, max_chars, reference=ref))
         else:
             new_bodies.append(raw)
+
+    new_bodies = _ensure_bodies_filled(
+        originals,
+        new_bodies,
+        max_chars,
+        reference_bodies=reference_bodies,
+        bullet_indices=bullet_indices,
+    )
 
     updated, changes = _apply_bullets_to_section(
         tex,
@@ -292,6 +346,7 @@ def transform_items_ai(
     provider: str = "gemini",
     feedback: str = "",
     bullet_indices: set[int] | None = None,
+    reference_bodies: list[str] | None = None,
 ) -> tuple[str, int, list[tuple[str, str]], str | None]:
     section = flatten_resume_bullets(section)
     bullets = _extract_bullets(section)
@@ -325,23 +380,32 @@ def transform_items_ai(
         if bullet_indices is not None and i not in bullet_indices:
             final_bodies.append(orig_raw)
             continue
-        line = _enforce_edge_to_edge(orig_clean, ai_line, max_chars)
+        ref_clean = reference_bodies[i] if reference_bodies and i < len(reference_bodies) else orig_clean
+        line = _enforce_edge_to_edge(ref_clean, ai_line, max_chars)
         if (
             bullet_needs_work(line, max_chars)
-            or _looks_truncated(orig_clean, line)
-            or _is_prefix_truncation(orig_clean, line)
+            or _looks_truncated(ref_clean, line)
+            or _is_prefix_truncation(ref_clean, line)
         ):
-            line = fit_bullet_to_line(orig_clean, max_chars)
-            line = _enforce_edge_to_edge(orig_clean, line, max_chars)
+            line = fit_bullet_to_line(ref_clean, max_chars)
+            line = _enforce_edge_to_edge(ref_clean, line, max_chars)
         if bullet_needs_work(line, max_chars):
-            line = _rewrite_bullet_body(orig_raw, max_chars)
-        if _clean_bullet(line) == orig_clean and bullet_needs_work(orig_clean, max_chars):
-            forced = fit_bullet_to_line(orig_clean, max_chars)
+            line = _rewrite_bullet_body(orig_raw, max_chars, reference=ref_clean)
+        if _clean_bullet(line) == orig_clean and bullet_needs_work(ref_clean, max_chars):
+            forced = fit_bullet_to_line(ref_clean, max_chars)
             if len(_clean_bullet(forced)) > len(orig_clean):
-                line = _enforce_edge_to_edge(orig_clean, forced, max_chars)
+                line = _enforce_edge_to_edge(ref_clean, forced, max_chars)
             else:
-                line = _rewrite_bullet_body(orig_raw, max_chars)
-        final_bodies.append(_enforce_edge_to_edge(orig_clean, line, max_chars))
+                line = _rewrite_bullet_body(orig_raw, max_chars, reference=ref_clean)
+        final_bodies.append(_enforce_edge_to_edge(ref_clean, line, max_chars))
+
+    final_bodies = _ensure_bodies_filled(
+        originals,
+        final_bodies,
+        max_chars,
+        reference_bodies=reference_bodies,
+        bullet_indices=bullet_indices,
+    )
 
     updated, changes = _apply_bullets_to_section(
         section,
@@ -379,6 +443,7 @@ def process(
     provider: str = "gemini",
     feedback: str = "",
     bullet_indices: set[int] | None = None,
+    reference_tex: str | None = None,
 ) -> tuple[str, dict]:
     """
     Process resume tex. If `company` is set, only fix that experience block.
@@ -410,6 +475,7 @@ def process(
     if block:
         label = block.label
         section = tex[block.start : block.end]
+        reference_bodies = _reference_bodies_for_block(reference_tex, block)
         ai_error: str | None = None
         from ai_rewriter import resolve_api_key
 
@@ -424,6 +490,7 @@ def process(
                 provider,
                 feedback,
                 bullet_indices=bullet_indices,
+                reference_bodies=reference_bodies,
             )
             mode = "ai" if not ai_error else "rules"
             if ai_error and "No " not in ai_error:
@@ -432,6 +499,7 @@ def process(
                     strong,
                     max_chars,
                     bullet_indices=bullet_indices,
+                    reference_bodies=reference_bodies,
                 )
                 mode = "rules"
             elif not changes:
@@ -440,13 +508,18 @@ def process(
                     strong,
                     max_chars,
                     bullet_indices=bullet_indices,
+                    reference_bodies=reference_bodies,
                 )
                 if changes:
                     mode = "rules"
                     ai_error = ai_error or "AI returned no changes — applied rule-based line fill."
         else:
             section, items, changes = transform_items_rules(
-                section, strong, max_chars, bullet_indices=bullet_indices
+                section,
+                strong,
+                max_chars,
+                bullet_indices=bullet_indices,
+                reference_bodies=reference_bodies,
             )
             mode = "rules"
             if use_ai and strong and not has_key:

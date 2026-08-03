@@ -388,6 +388,9 @@ def _weak_opener(line: str) -> bool:
 
 def _finalize_bullet(original: str, line: str, max_chars: int) -> str:
     from bullet_strong import (
+        FILL_GOAL_RATIO,
+        FILL_MIN_RATIO,
+        HARD_MAX_RATIO,
         fill_bullet_line,
         tighten_bullet,
         _is_prefix_truncation,
@@ -403,23 +406,24 @@ def _finalize_bullet(original: str, line: str, max_chars: int) -> str:
 
     orig = _clean_bullet(original)
     out = _dedupe_clauses(_clean_bullet(line))
-    target = int(max_chars * 0.90)
+    target = int(max_chars * FILL_MIN_RATIO)
+    goal = int(max_chars * FILL_GOAL_RATIO)
 
     if _is_prefix_truncation(orig, out):
         out = fill_bullet_line(orig, orig, max_chars)
 
     if _bullet_unchanged(orig, out) or _weak_opener(out):
         out = tighten_bullet(orig, max_chars)
-    elif len(out) < target:
+    elif len(out) < goal:
         out = fill_bullet_line(orig, out, max_chars)
         out = _expand_toward_limit(orig, out, max_chars)
-        out = _append_original_words(orig, out, max_chars, target)
-        if len(out) < target and len(out) < int(max_chars * 0.85):
-            out = _contextual_pad(orig, out, max_chars, target)
+        out = _append_original_words(orig, out, max_chars, goal)
+        if len(out) < goal:
+            out = _contextual_pad(orig, out, max_chars, goal)
 
     out = _dedupe_clauses(out)
-    if len(out) > int(max_chars * 0.97):
-        out = _trim_from_end(out, int(max_chars * 0.97), target)
+    if len(out) > int(max_chars * HARD_MAX_RATIO):
+        out = _trim_from_end(out, int(max_chars * HARD_MAX_RATIO), target)
 
     if len(out) < target and bullet_needs_work(out, max_chars):
         fitted = fit_bullet_to_line(orig, max_chars)
@@ -438,16 +442,16 @@ def _finalize_bullet(original: str, line: str, max_chars: int) -> str:
 
 def _enforce_edge_to_edge(original: str, line: str, max_chars: int) -> str:
     """Final pass: one full line, whether adding metrics or strengthening."""
-    from bullet_strong import fill_bullet_line, _trim_from_end, _dedupe_clauses
+    from bullet_strong import FILL_GOAL_RATIO, FILL_MIN_RATIO, HARD_MAX_RATIO, fill_bullet_line, _trim_from_end, _dedupe_clauses
 
     orig = _clean_bullet(original)
     out = _finalize_bullet(orig, _clean_bullet(line), max_chars)
-    target = int(max_chars * 0.90)
-    hard_max = int(max_chars * 0.97)
+    target = int(max_chars * FILL_MIN_RATIO)
+    goal = int(max_chars * FILL_GOAL_RATIO)
+    hard_max = int(max_chars * HARD_MAX_RATIO)
     if len(out) > hard_max:
         out = _trim_from_end(out, hard_max, target)
-    # Only expand modestly — AI output near the limit should not be padded further
-    if len(out) < target and len(out) < int(max_chars * 0.85):
+    if len(out) < goal:
         out = fill_bullet_line(orig, out, max_chars)
     if len(out) > hard_max:
         out = _trim_from_end(out, hard_max, target)
@@ -463,15 +467,17 @@ def _build_user_msg(
     feedback: str = "",
     indices_to_rewrite: set[int] | None = None,
 ) -> str:
-    target_lo = max(1, int(max_chars * 0.88))
+    from bullet_strong import FILL_GOAL_RATIO, FILL_MIN_RATIO, HARD_MAX_RATIO
+
+    target_lo = max(1, int(max_chars * FILL_MIN_RATIO))
     role_block = (
         f"Company: {company}\nTitle: {title}\nDates: {dates}\n"
         f"Line width: one full line edge-to-edge across the page "
-        f"(~{max_chars} chars — each bullet MUST be {target_lo}–{int(max_chars * 0.97)} chars; "
+        f"(~{max_chars} chars — each bullet MUST be {target_lo}–{int(max_chars * HARD_MAX_RATIO)} chars; "
         f"NEVER wrap to a second line)"
     )
     numbered_lines: list[str] = []
-    min_len = max(1, int(max_chars * 0.92))
+    min_len = max(1, int(max_chars * FILL_GOAL_RATIO))
     for i, b in enumerate(bullets):
         metrics = _extract_metrics(b)
         short_flag = f" ({len(b)} chars — TOO SHORT, expand to {target_lo}–{max_chars})" if len(b) < min_len else ""

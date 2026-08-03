@@ -181,7 +181,7 @@ def effective_line_chars(tex: str) -> int:
         n = estimate_line_chars(preview_tex)
     else:
         n = estimate_line_chars(tex)
-    return max(80, min(105, n))
+    return max(80, min(115, n))
 
 
 def line_width_hint(tex: str) -> str:
