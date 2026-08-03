@@ -82,7 +82,7 @@ STRONG_VERB_RE = re.compile(
     r"Optimized|Improved|Launched|Scaled|Automated|Architected|Engineered|"
     r"Partnered|Devised|Ensured|Created|Implemented|Drove|Grew|Achieved|"
     r"Advised|Deliver|Develop|Manage|Lead|Build|Drive|Grow|Partner|Devise|Ensure|"
-    r"Instructed|Co-developed|Studied|Presented|Began|"
+    r"Instructed|Taught|Tutored|Trained|Coached|Co-developed|Studied|Presented|Began|"
     r"Work|Serve)\b",
     re.I,
 )

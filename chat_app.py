@@ -332,9 +332,8 @@ def format_changes(
     if not changes:
         if short_count:
             return (
-                f"**{short_count} bullet(s) in this section still need work.** "
-                "Click **Fix selected section** again, "
-                "or say *make every line edge-to-edge* in chat."
+                f"**{short_count} bullet(s) still look too short, too long, or weak** "
+                "compared to your PDF line width — but the LaTeX text did not change on this pass."
             )
         return "Bullets already fit — all numbers and metrics kept as-is."
     from ai_rewriter import _extract_metrics, _looks_truncated
@@ -624,13 +623,32 @@ def apply_fix(
     short_resume = count_short_bullets(st.session_state.working_tex or result, line_chars)
     parts.append("\n\n" + format_changes(stats["changes"], line_chars, short_count=short_after))
     if stats["rewritten"] == 0 and not stats["changes"]:
-        parts.append(
-            "\n\n⚠️ **No bullets changed** — the rewriter could not improve the selected lines. "
-            "Check your API key, or try chat: *make every line edge-to-edge*."
+        ai_key_issue = bool(
+            ai_note
+            and any(
+                k in ai_note.lower()
+                for k in ("api key", "quota", "rate limit", "no gemini", "no openai")
+            )
         )
+        if ai_key_issue:
+            parts.append(
+                "\n\n⚠️ **No bullets changed** — AI could not run. "
+                f"{ai_note} Paste a key in the sidebar, or try again."
+            )
+        elif short_after:
+            parts.append(
+                "\n\n⚠️ **Nothing changed in your `.tex`** — the sidebar still sees line-fill gaps, "
+                "but AI returned the same wording and the rule-based expander could not stretch "
+                "these lines further without making things up. "
+                "Try chat: *make every line edge-to-edge* or *expand bullet 1 with more detail*."
+            )
+        else:
+            parts.append(
+                "\n\nℹ️ **No edits were needed** — selected bullets already match the line target."
+            )
     elif short_after:
         parts.append(
-            f"\n\n💡 **{short_after} bullet(s) in this section still need work** — "
+            f"\n\n💡 **{short_after} bullet(s) in this section still need another pass** — "
             "click **Fix selected section** again or ask in chat to expand them."
         )
     elif short_resume > 0 and company_arg:
