@@ -82,7 +82,7 @@ STRONG_VERB_RE = re.compile(
     r"Optimized|Improved|Launched|Scaled|Automated|Architected|Engineered|"
     r"Partnered|Devised|Ensured|Created|Implemented|Drove|Grew|Achieved|"
     r"Advised|Deliver|Develop|Manage|Lead|Build|Drive|Grow|Partner|Devise|Ensure|"
-    r"Instructed|Co-developed|Studied|Presented|"
+    r"Instructed|Co-developed|Studied|Presented|Began|"
     r"Work|Serve)\b",
     re.I,
 )
@@ -621,6 +621,8 @@ def bullet_line_status(text: str, max_chars: int) -> str:
     if len(t) < target:
         return "short"
     if _weak_opener_local(t):
+        return "weak"
+    if not STRONG_VERB_RE.search(t) and not GERUND_START.search(t):
         return "weak"
     return "ok"
 

@@ -18,7 +18,7 @@ import fit_resume
 from fit_resume import list_section_bullet_texts
 from brand import APP_NAME, APP_TAGLINE, EXPORT_FILENAME
 from landing import render_landing
-from bullet_strong import bullet_needs_work, bullet_status_display, render_bullet_status_legend
+from bullet_strong import bullet_line_status, bullet_needs_work, bullet_status_display, render_bullet_status_legend
 from line_width import effective_line_chars, line_width_hint
 from pdf_to_latex import flatten_resume_bullets, pdf_to_jakes_latex, strip_fitline_package
 from ai_rewriter import effective_gemini_key, resolve_api_key, test_gemini_key
@@ -354,10 +354,26 @@ def format_changes(
     return "\n".join(parts)
 
 
+def _pdf_for_tex(tex: str | None) -> bytes | None:
+    """Return compiled PDF bytes that match the given source, when available."""
+    if not tex:
+        return None
+    if tex == st.session_state.get("fixed_tex") and st.session_state.get("fixed_pdf"):
+        return st.session_state.fixed_pdf
+    if tex == st.session_state.get("source_tex") and st.session_state.get("source_pdf"):
+        return st.session_state.source_pdf
+    working = st.session_state.get("working_tex")
+    if working == tex:
+        if st.session_state.get("fixed_tex") == tex and st.session_state.get("fixed_pdf"):
+            return st.session_state.fixed_pdf
+        return st.session_state.get("source_pdf")
+    return st.session_state.get("source_pdf")
+
+
 def line_chars_for(tex: str | None) -> int:
     if not tex:
         return 98
-    return effective_line_chars(tex)
+    return effective_line_chars(tex, _pdf_for_tex(tex))
 
 
 def count_short_bullets(tex: str, line_chars: int, section_label: str | None = None) -> int:
@@ -443,9 +459,12 @@ def load_resume(tex: str, label: str = "pasted resume") -> None:
         st.session_state.experiences = list_itemize_blocks(tex)
     if st.session_state.experiences:
         st.session_state.selected_section = st.session_state.experiences[0].label
-    st.session_state.line_chars = effective_line_chars(tex)
     with st.spinner("Compiling PDF preview…"):
         compile_and_store(tex, which="source")
+    st.session_state.line_chars = effective_line_chars(
+        st.session_state.source_tex or tex,
+        st.session_state.source_pdf,
+    )
 
 
 def active_api_key(provider: str) -> str | None:
@@ -469,9 +488,9 @@ def render_bullet_line_analysis(bullets: list[str], line_chars: int) -> None:
     if not bullets or not line_chars:
         return
     st.caption(render_bullet_status_legend())
-    short_n = sum(1 for b in bullets if bullet_needs_work(b, line_chars))
-    if short_n:
-        st.caption(f"**{short_n} of {len(bullets)}** bullet(s) need line fill in this section.")
+    needs_n = sum(1 for b in bullets if bullet_line_status(b, line_chars) != "ok")
+    if needs_n:
+        st.caption(f"**{needs_n} of {len(bullets)}** bullet(s) need work in this section.")
     for i, text in enumerate(bullets):
         icon, label = bullet_status_display(text, line_chars)
         st.caption(f"{icon} **{i + 1}.** {label}")
@@ -566,6 +585,7 @@ def apply_fix(
 
     with st.spinner("Updating PDF preview…"):
         compile_and_store(result, which="fixed")
+    st.session_state.line_chars = effective_line_chars(result, st.session_state.fixed_pdf)
 
     section = stats.get("section", "resume")
     mode = stats.get("mode", "rules")
@@ -1027,7 +1047,7 @@ def render_resume_section() -> None:
                 if n:
                     load_msg = (
                         f"Loaded! Found **{n}** jobs: "
-                        + ", ".join(e.company for e in st.session_state.experiences[:4])
+                        + ", ".join(e.label for e in st.session_state.experiences[:4])
                         + ". Pick one in the sidebar, then click **Fix selected section**."
                     )
                 else:

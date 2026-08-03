@@ -21,6 +21,22 @@ SKIP_SECTIONS = frozenset(
     {"skills", "skill", "education", "coursework", "certifications", "certification", "interests", "languages"}
 )
 
+# Jake / Overleaf list wrapper macros — never treat as company or job titles
+RESUME_MACRO_NAMES = frozenset(
+    {
+        "resumesubheadingliststart",
+        "resumesubheadinglistend",
+        "resumeitemliststart",
+        "resumeitemlistend",
+        "resumeitem",
+        "resumeitemlist",
+        "resumesubheading",
+        "resumeprojectheading",
+        "resumeprojectheadingliststart",
+        "resumeprojectheadinglistend",
+    }
+)
+
 ROLE_CMD_RE = re.compile(r"\\role(?:fit)?(?![\w-])\s*", re.MULTILINE)
 ROLE_USE_RE = re.compile(r"\\role(?:fit)?(?![\w-])\s*\{", re.MULTILINE)
 
@@ -90,7 +106,7 @@ def _company_from_plain_header(header: str) -> tuple[str, str, str]:
         clean = _strip_latex(line)
         if not clean or clean.lower().startswith("professional experience"):
             continue
-        if clean.startswith("\\section"):
+        if clean.startswith("\\section") or _is_resume_macro_label(clean):
             continue
         # e.g. "IBM — Software Engineer (2020–2023)" or "IBM | Engineer"
         for sep in (" — ", " – ", " - ", " | ", " · "):
@@ -107,7 +123,7 @@ def diagnose_tex(tex: str) -> dict[str, int | list[str]]:
     roles = len(ROLE_USE_RE.findall(body))
     subheadings = len(re.findall(r"\\resumeSubheading\s*\{", body))
     itemizes = _count_list_blocks(body)
-    hints = [e.company for e in parse_experiences(tex)]
+    hints = [e.company for e in parse_experiences(tex) if not _is_resume_macro_label(e.company)]
     if not hints:
         for iz in iter_list_blocks(body):
             if _should_skip_itemize(body, iz.start()):
@@ -169,6 +185,37 @@ def _strip_latex(text: str) -> str:
         out = re.sub(r"\\\\(\[[^\]]*\])?\s*", " ", out)
         out = re.sub(r"\s+", " ", out).strip()
     return out
+
+
+def _is_resume_macro_label(text: str) -> bool:
+    """True for LaTeX wrapper macros like \\resumeSubHeadingListStart."""
+    if not text or not text.strip():
+        return False
+    clean = _strip_latex(text).strip().lower().lstrip("\\")
+    clean = re.sub(r"[^a-z]", "", clean)
+    if clean in RESUME_MACRO_NAMES:
+        return True
+    return bool(clean.startswith("resume") and clean.endswith(("liststart", "listend")))
+
+
+def _is_valid_experience_block(block: "ExperienceBlock") -> bool:
+    for field in (block.company, block.title, block.label):
+        if _is_resume_macro_label(field):
+            return False
+    return bool((block.company or block.title or "").strip())
+
+
+def _is_wrapper_list_block(block_text: str) -> bool:
+    """Outer Jake list that wraps subheadings — not a bullet section to fix."""
+    if re.search(r"\\resumeSubheading\s*\{", block_text) and not re.search(
+        r"\\resumeItem\{", block_text
+    ):
+        return True
+    if re.search(r"\\resumeProjectHeading\s*\{", block_text) and not re.search(
+        r"\\resumeItem\{", block_text
+    ):
+        return True
+    return False
 
 
 def _read_n_args(tex: str, pos: int, n: int) -> tuple[list[str], int] | None:
@@ -297,6 +344,8 @@ def _parse_itemize_fallback(tex: str) -> list[ExperienceBlock]:
             continue
         if _should_skip_itemize(tex, iz.start()):
             continue
+        if _is_wrapper_list_block(iz.group(0)):
+            continue
 
         header = tex[max(0, iz.start() - 1200) : iz.start()]
         if not _block_has_bullets(iz.group(0)):
@@ -341,11 +390,13 @@ def _parse_itemize_fallback(tex: str) -> list[ExperienceBlock]:
                     start = bold[-1].start() + max(0, iz.start() - 1200)
                 else:
                     company, title, dates = _company_from_plain_header(header)
-                    if not company:
+                    if not company or _is_resume_macro_label(company):
                         continue
                     start = max(0, iz.start() - 1200)
 
         if not company and not title:
+            continue
+        if _is_resume_macro_label(company) or _is_resume_macro_label(title):
             continue
 
         seen.add(span)
@@ -436,6 +487,8 @@ def _uncovered_itemize_blocks(tex: str, existing: list[ExperienceBlock]) -> list
     for iz in iter_list_blocks(tex):
         if _should_skip_itemize(tex, iz.start()):
             continue
+        if _is_wrapper_list_block(iz.group(0)):
+            continue
         if not _block_has_bullets(iz.group(0)):
             continue
         if any(b.start <= iz.start() and iz.end() <= b.end for b in existing):
@@ -483,6 +536,9 @@ def _uncovered_itemize_blocks(tex: str, existing: list[ExperienceBlock]) -> list
             else:
                 continue
 
+        if _is_resume_macro_label(company) or _is_resume_macro_label(title):
+            continue
+
         extra.append(
             ExperienceBlock(
                 company=company or title,
@@ -510,7 +566,7 @@ def parse_experiences(tex: str) -> list[ExperienceBlock]:
         blocks = _merge_experience_blocks(blocks)
     else:
         blocks = _parse_itemize_fallback(tex)
-    return blocks
+    return [b for b in blocks if _is_valid_experience_block(b)]
 
 
 def _matches_query(block: ExperienceBlock, q: str) -> bool:
