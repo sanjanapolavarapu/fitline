@@ -292,6 +292,12 @@ def _ensure_bodies_filled(
         if not bullet_needs_work(current, max_chars) and not bullet_needs_work(ref, max_chars):
             continue
         improved = _rewrite_bullet_body(raw, max_chars, reference=ref)
+        clean_improved = _clean_bullet(improved)
+        if bullet_needs_work(clean_improved, max_chars) and clean_improved == current:
+            forced = fit_bullet_to_line(ref, max_chars)
+            forced = _enforce_edge_to_edge(ref, forced, max_chars)
+            if _clean_bullet(forced) != current:
+                improved = forced
         if len(_clean_bullet(improved)) > len(current) or bullet_needs_work(current, max_chars):
             out[i] = improved
     return out
@@ -504,7 +510,7 @@ def process(
                 mode = "rules"
             elif not changes:
                 section, items, changes = transform_items_rules(
-                    section,
+                    tex[block.start : block.end],
                     strong,
                     max_chars,
                     bullet_indices=bullet_indices,
